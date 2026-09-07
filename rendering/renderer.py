@@ -3,6 +3,11 @@
 The renderer is a dumb view: it reads simulation state and paints it.
 The static background (fill + grid) is pre-rendered once and blitted
 every frame, so the per-frame cost is one blit plus the organisms.
+
+Traits are drawn directly, so selection is visible on the plate:
+    size       -> body radius
+    energy     -> body brightness (dim = starving)
+    speed      -> heading tick length
 """
 
 import math
@@ -10,11 +15,20 @@ import math
 import pygame
 
 from simulation.ecosystem import Ecosystem
+from simulation.genome import body_radius_px
 from ui import theme
 
 GRID_SPACING = 64
-ORGANISM_RADIUS = 3
-HEADING_TICK = 8
+STARVED = (30, 90, 62)  # color at zero energy
+MAX_TICK = 14  # px at max speed
+
+
+def _energy_color(energy: float, max_energy: float) -> tuple[int, int, int]:
+    t = max(0.0, min(1.0, energy / max_energy))
+    return tuple(
+        round(starved + (accent - starved) * t)
+        for starved, accent in zip(STARVED, theme.ACCENT)
+    )
 
 
 class Renderer:
@@ -39,15 +53,22 @@ class Renderer:
         self.surface.blit(self.background, (0, 0))
 
         for o in world.organisms:
-            # heading tick so you can see where each dot is going
+            radius = body_radius_px(o.genome.size)
+            tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
+
+            # heading tick: length encodes speed
             pygame.draw.line(
                 self.surface,
                 theme.HEADING,
                 (o.x, o.y),
-                (o.x + math.cos(o.heading) * HEADING_TICK,
-                 o.y + math.sin(o.heading) * HEADING_TICK),
+                (o.x + math.cos(o.heading) * tick,
+                 o.y + math.sin(o.heading) * tick),
                 1,
             )
+            # body: radius encodes size, brightness encodes energy
             pygame.draw.circle(
-                self.surface, theme.ACCENT, (int(o.x), int(o.y)), ORGANISM_RADIUS
+                self.surface,
+                _energy_color(o.energy, world.config.max_energy),
+                (int(o.x), int(o.y)),
+                round(radius),
             )

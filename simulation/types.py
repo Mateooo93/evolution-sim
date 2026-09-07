@@ -1,15 +1,21 @@
 from dataclasses import dataclass
 
+from .genome import Genome
+
 
 @dataclass(slots=True)
 class Organism:
-    """An organism in the simulation.
+    """A living organism with a heritable genome.
 
-    Foundation stage: just a moving dot with a heading.
-    Later milestones add: genome, energy, age, sensors, species color...
+    Energy drains every tick (metabolism + movement + body upkeep);
+    hitting zero means starvation death. Ageing past the genome's
+    lifespan means natural death.
     """
 
     id: int
     x: float
     y: float
     heading: float  # movement direction in radians
+    genome: Genome
+    energy: float
+    age: float
