@@ -1,32 +1,27 @@
-# React + TypeScript + Vite
+# EvoLab
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An interactive artificial-life simulator: virtual organisms compete for
+resources, reproduce, mutate, and evolve. Watch natural selection in real
+time, manipulate the environment, and run evolution experiments.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python main.py
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Controls: `Space` pauses, the header has a pause button and a speed slider.
+
+## Architecture
+
+- `simulation/` — pure Python, no pygame: `Ecosystem` holds all state and
+  only knows how to advance by `dt` seconds. The UI owns the clock.
+- `rendering/` — draws ecosystem state onto the screen (static background
+  is pre-rendered, blitted every frame).
+- `ui/` — hand-drawn widgets (button, slider, label) and the theme palette.
+
+The simulation advances on a fixed 60 Hz timestep with an accumulator;
+the speed control scales how many steps run per real second, never the
+step size.
