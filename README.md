@@ -30,10 +30,11 @@ Controls: `Space` pauses, the header has a pause button and a speed slider.
   drain/s = (0.30 + 0.55·metabolism) × (1 + 0.6·speed + 0.8·size) × (1 − 0.5·efficiency)
   ```
 
-  Food spawns continuously (capped) and is sensed by vision — range
-  30–150 px depending on the vision trait, toroidal, re-scanned at most
-  every 0.25 s. Hungry organisms steer toward the nearest food (turn
-  rate drops with size) and eat on contact. They die of starvation or
+  The plate starts pre-seeded with food and it then spawns continuously
+  (capped). Food is sensed by vision — range 30–150 px depending on the
+  vision trait, toroidal, re-scanned at most every 0.25 s.
+  Hungry organisms steer toward the nearest food (turn rate drops with
+  size) and eat on contact. They die of starvation or
   old age. A slow stream of random immigrants keeps the population from
   emptying until reproduction lands.
 - `rendering/` — draws ecosystem state onto the screen (static background
