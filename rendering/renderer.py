@@ -52,6 +52,10 @@ class Renderer:
     def render(self, world: Ecosystem) -> None:
         self.surface.blit(self.background, (0, 0))
 
+        # Food under the organisms
+        for f in world.food:
+            pygame.draw.circle(self.surface, theme.FOOD, (int(f.x), int(f.y)), 2)
+
         for o in world.organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px

@@ -50,8 +50,9 @@ def main() -> int:
     cy = header.centery
     logo = Label((header.left + 16, cy), "EVOLAB", logo_font, theme.ACCENT)
     population = Label((146, cy), "Population: 80", font)
-    traits = Label((300, cy), "avg speed 50%  size 50%", font)
-    pause_btn = Button((540, cy - 14, 100, 28), "Pause", font)
+    food = Label((300, cy), "Food: 0", font)
+    traits = Label((420, cy), "avg speed 50%  size 50%", font)
+    pause_btn = Button((640, cy - 14, 100, 28), "Pause", font)
     speed_value = Label((WIDTH - 416, cy), "1.0x", font)
     speed_slider = Slider((WIDTH - 360, cy - 8, 200, 16), font, 0.25, 20.0, 1.0)
     hint = Label((WIDTH - 132, cy), "Space", font, theme.PANEL_BORDER)
@@ -92,6 +93,7 @@ def main() -> int:
         pygame.draw.rect(screen, theme.PANEL, header, border_radius=8)
         pygame.draw.rect(screen, theme.PANEL_BORDER, header, width=1, border_radius=8)
         population.set_text(f"Population: {len(world.organisms)}")
+        food.set_text(f"Food: {len(world.food)}")
         speed_value.set_text(f"{speed_slider.value:.1f}x")
         traits.set_text(
             f"avg speed {round(world.trait_average('speed') * 100)}%"
@@ -99,6 +101,7 @@ def main() -> int:
         )
         logo.draw(screen)
         population.draw(screen)
+        food.draw(screen)
         traits.draw(screen)
         speed_value.draw(screen)
         speed_slider.draw(screen)

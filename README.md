@@ -24,9 +24,18 @@ Controls: `Space` pauses, the header has a pause button and a speed slider.
 - `simulation/` — pure Python, no pygame: `Ecosystem` holds all state and
   only knows how to advance by `dt` seconds. The UI owns the clock.
   Organisms carry an 8-trait `Genome`; energy drains from metabolism,
-  movement and body upkeep (trait tradeoffs), and they die of starvation
-  or old age. Until food + reproduction land, a slow stream of random
-  immigrants keeps the lab population from emptying.
+  movement and body upkeep (trait tradeoffs):
+
+  ```
+  drain/s = (0.30 + 0.55·metabolism) × (1 + 0.6·speed + 0.8·size) × (1 − 0.5·efficiency)
+  ```
+
+  Food spawns continuously (capped) and is sensed by vision — range
+  30–150 px depending on the vision trait, toroidal, re-scanned at most
+  every 0.25 s. Hungry organisms steer toward the nearest food (turn
+  rate drops with size) and eat on contact. They die of starvation or
+  old age. A slow stream of random immigrants keeps the population from
+  emptying until reproduction lands.
 - `rendering/` — draws ecosystem state onto the screen (static background
   is pre-rendered, blitted every frame). Body radius = size, brightness =
   energy, heading tick length = speed, so selection is visible on the plate.

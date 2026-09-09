@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from .food import Food
 from .genome import Genome
 
 
@@ -19,3 +20,5 @@ class Organism:
     genome: Genome
     energy: float
     age: float
+    target: Food | None = None  # food currently being chased
+    last_sense: float = 0.0  # sim time of the last food scan
