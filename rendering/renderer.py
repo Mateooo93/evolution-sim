@@ -54,7 +54,7 @@ class Renderer:
 
         # Food under the organisms
         for f in world.food:
-            pygame.draw.circle(self.surface, theme.FOOD, (int(f.x), int(f.y)), 2)
+            pygame.draw.circle(self.surface, theme.FOOD, (int(f.x), int(f.y)), 3)
 
         for o in world.organisms:
             radius = body_radius_px(o.genome.size)

@@ -34,12 +34,13 @@ class WorldConfig:
     food_spawn_rate: float = 2.0  # food items per second
     max_food: int = 250  # food cap (the world is finite)
     food_energy: float = 30.0  # energy per food item
+    initial_food_fraction: float = 0.6  # food present at t=0 (world starts alive)
 
     # --- senses ------------------------------------------------------------
     vision_base: float = 30.0  # sensing range in px at vision trait 0
     vision_range: float = 120.0  # extra range at vision trait 1
     sense_interval: float = 0.25  # seconds between re-senses
-    hungry_level: float = 0.70  # fraction of max energy below which food is sought
+    hungry_level: float = 0.80  # fraction of max energy below which food is sought
     steer_rate: float = 6.0  # max turn toward target (rad/s), agility drops with size
 
     # --- immigration -----------------------------------------------------
@@ -67,8 +68,12 @@ class Ecosystem:
         self._migration_acc = 0.0
         self._food_acc = 0.0
         self._food_ids: set[int] = set()
+        self.eaten = 0  # lifetime count of food items consumed
         for _ in range(config.organisms):
             self._spawn()
+        # The world starts with food already on the plate, not empty.
+        for _ in range(int(config.max_food * config.initial_food_fraction)):
+            self._spawn_food()
 
     # --- population -----------------------------------------------------
 
@@ -81,7 +86,7 @@ class Ecosystem:
                 y=random.random() * c.height,
                 heading=random.random() * 2 * math.pi,
                 genome=random_genome(),
-                energy=c.max_energy,
+                energy=random.uniform(0.4, 1.0) * c.max_energy,
                 age=0.0,
             )
         )
@@ -108,6 +113,7 @@ class Ecosystem:
     def _eat_food(self, f: Food) -> None:
         self.food.remove(f)
         self._food_ids.discard(f.id)
+        self.eaten += 1
 
     def _update_food(self, dt: float) -> None:
         c = self.config
