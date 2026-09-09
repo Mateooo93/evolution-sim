@@ -8,9 +8,14 @@ time, manipulate the environment, and run evolution experiments.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m ensurepip --upgrade
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python main.py
 ```
+
+(`ensurepip` guards against systems where `venv` is created without pip —
+common on Ubuntu/Pop!_OS without the `python3-venv` package. If it
+errors, run `sudo apt install -y python3-venv python3-pip` first.)
 
 Controls: `Space` pauses, the header has a pause button and a speed slider.
 
