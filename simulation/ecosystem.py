@@ -5,7 +5,15 @@ import random
 from dataclasses import dataclass
 
 from .food import Food
-from .genome import Genome, move_speed_px, body_radius_px, random_genome
+from .genome import (
+    Genome,
+    move_speed_px,
+    body_radius_px,
+    random_genome,
+    crossover,
+    mutate,
+)
+from .spatial import SpatialGrid
 from .types import Organism
 
 
@@ -43,10 +51,19 @@ class WorldConfig:
     hungry_level: float = 0.80  # fraction of max energy below which food is sought
     steer_rate: float = 6.0  # max turn toward target (rad/s), agility drops with size
 
+    # --- reproduction -----------------------------------------------------
+    mate_radius: float = 30.0  # partners must be within this distance
+    mate_energy_gate: float = 50.0  # energy required to mate
+    mate_cost: float = 25.0  # energy each parent spends
+    baby_energy: float = 30.0  # energy a newborn starts with
+    readiness_base: float = 0.05  # readiness gained/s at fertility 0
+    readiness_fertility: float = 0.45  # extra gained/s at fertility 1
+    max_population: int = 300  # no births above this (safety valve)
+    mutation_rate: float = 0.05  # per-trait mutation probability (slider-driven)
     # --- immigration -----------------------------------------------------
     # Safety net: a stream of fresh random immigrants keeps the lab
-    # population from emptying out entirely. Tightly coupled to births
-    # (reproduction milestone) — watch for its removal then.
+    # population from emptying out entirely. Now that reproduction is
+    # live it rarely fires, but it guards against total extinction.
     min_population: int = 40
     migration_rate: float = 1.0  # immigrants per second while below floor
 
@@ -64,6 +81,11 @@ class Ecosystem:
         self.food: list[Food] = []
         self.time = 0.0  # simulation time in seconds
         self.deaths: dict[str, int] = {"starvation": 0, "age": 0}
+        self.births = 0  # lifetime count of births
+        # (t, avg_speed, avg_size, population) sampled once per sim second
+        self.history: list[tuple[float, float, float, int]] = []
+        self._history_acc = 0.0
+        self.grid = SpatialGrid(config.width, config.height)
         self._next_id = 1
         self._migration_acc = 0.0
         self._food_acc = 0.0
@@ -171,6 +193,7 @@ class Ecosystem:
 
         for o in list(self.organisms):
             o.age += dt
+            o.readiness += (c.readiness_base + c.readiness_fertility * o.genome.fertility) * dt
 
             # Decide what to do
             hungry = o.energy < c.hungry_level * c.max_energy
@@ -223,7 +246,24 @@ class Ecosystem:
                     o.target = None
 
         self._update_food(dt)
+        self.grid.rebuild(self.organisms)
+        self._mate()
         self._migrate(dt)
+
+        # Sample the stats graph once per simulated second.
+        self._history_acc += dt
+        if self._history_acc >= 1.0:
+            self._history_acc -= 1.0
+            self.history.append(
+                (
+                    self.time,
+                    self.trait_average("speed"),
+                    self.trait_average("size"),
+                    len(self.organisms),
+                )
+            )
+            if len(self.history) > 300:
+                del self.history[0]
 
     def _steer_toward(self, o: Organism, dt: float) -> None:
         """Turn the heading toward the target at a max rate (toroidal).
@@ -247,6 +287,65 @@ class Ecosystem:
         diff = math.atan2(math.sin(desired - o.heading), math.cos(desired - o.heading))
         turn = c.steer_rate * (1.0 - 0.5 * o.genome.size)
         o.heading += max(-turn * dt, min(turn * dt, diff))
+
+    # --- reproduction -----------------------------------------------------
+
+    def _mate(self) -> None:
+        """Local mating: a ready, energetic organism pairs with a nearby
+        ready partner; the two pay the cost and produce one mutated
+        crossover baby at their (toroidal) midpoint.
+        """
+        c = self.config
+        for o in list(self.organisms):
+            if len(self.organisms) >= c.max_population:
+                break
+            if o.readiness < 1.0 or o.energy < c.mate_energy_gate:
+                continue
+            partner = self._find_partner(o)
+            if partner is None:
+                continue
+
+            o.energy -= c.mate_cost
+            partner.energy -= c.mate_cost
+            o.readiness = 0.0
+            partner.readiness = 0.0
+
+            # Toroidal midpoint, so a pair straddling an edge still
+            # produces a baby between them.
+            dx = partner.x - o.x
+            if dx > c.width / 2:
+                dx -= c.width
+            elif dx < -c.width / 2:
+                dx += c.width
+            dy = partner.y - o.y
+            if dy > c.height / 2:
+                dy -= c.height
+            elif dy < -c.height / 2:
+                dy += c.height
+
+            genome = mutate(crossover(o.genome, partner.genome), c.mutation_rate)
+            baby = Organism(
+                id=self._next_id,
+                x=o.x + dx / 2,
+                y=o.y + dy / 2,
+                heading=random.random() * 2 * math.pi,
+                genome=genome,
+                energy=c.baby_energy,
+                age=0.0,
+                generation=max(o.generation, partner.generation) + 1,
+            )
+            self._next_id += 1
+            self._wrap(baby)
+            self.organisms.append(baby)
+            self.births += 1
+
+    def _find_partner(self, o: Organism) -> Organism | None:
+        """First ready, energetic neighbor within the mating radius."""
+        c = self.config
+        for p in self.grid.within(o.x, o.y, c.mate_radius):
+            if p is not o and p.readiness >= 1.0 and p.energy >= c.mate_energy_gate:
+                return p
+        return None
 
     # --- trait costs -----------------------------------------------------
 

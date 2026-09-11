@@ -17,7 +17,8 @@ python3 -m venv .venv
 common on Ubuntu/Pop!_OS without the `python3-venv` package. If it
 errors, run `sudo apt install -y python3-venv python3-pip` first.)
 
-Controls: `Space` pauses, the header has a pause button and a speed slider.
+Controls: `Space` pauses. The header has a pause button, a speed slider,
+and a mutation-rate slider.
 
 ## Architecture
 
@@ -34,9 +35,23 @@ Controls: `Space` pauses, the header has a pause button and a speed slider.
   (capped). Food is sensed by vision — range 30–150 px depending on the
   vision trait, toroidal, re-scanned at most every 0.25 s.
   Hungry organisms steer toward the nearest food (turn rate drops with
-  size) and eat on contact. They die of starvation or
-  old age. A slow stream of random immigrants keeps the population from
-  emptying until reproduction lands.
+  size) and eat on contact. They die of starvation or old age.
+
+  Reproduction is local: a ready, energetic organism pairs with a
+  ready neighbor within the mating radius. Each parent pays an energy
+  cost and the two produce one baby at their midpoint. The baby's
+  genome is a per-trait crossover of the parents, then a per-trait
+  Gaussian mutation (probability set by the header slider). Readiness
+  is gated by the fertility trait; the generation number is tracked
+  and shown in the header.
+
+  A spatial hash grid answers neighbor queries in ~O(1) per query
+  regardless of population, which keeps mating (and later, predation)
+  cheap. A slow stream of random immigrants remains as an extinction
+  safety net.
+
+  The ecosystem records a per-second history (avg speed, avg size,
+  population), drawn as sparklines in the bottom-right panel.
 - `rendering/` — draws ecosystem state onto the screen (static background
   is pre-rendered, blitted every frame). Body radius = size, brightness =
   energy, heading tick length = speed, so selection is visible on the plate.

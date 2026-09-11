@@ -4,8 +4,8 @@ Every trait is a float in [0, 1]. Higher is not always better — each
 trait carries a tradeoff enforced in `energy_drain_per_s` and friends.
 
 Wired into the simulation right now: speed, size, metabolism, lifespan,
-efficiency. Still dormant (activated by later milestones):
-vision (sensing), fertility (reproduction), aggression (predation).
+efficiency, vision (sensing), fertility (reproduction). Still dormant:
+aggression (predation).
 """
 
 import random
@@ -37,6 +37,32 @@ class Genome:
 
 def random_genome() -> Genome:
     return Genome(*(random.random() for _ in TRAIT_NAMES))
+
+
+# --- genetics --------------------------------------------------------
+
+def crossover(a: Genome, b: Genome) -> Genome:
+    """Uniform crossover: each trait is copied from a random parent."""
+    return Genome(
+        **{n: random.choice((getattr(a, n), getattr(b, n))) for n in TRAIT_NAMES}
+    )
+
+
+def mutate(g: Genome, rate: float) -> Genome:
+    """Per-trait point mutation: with probability `rate`, nudge the trait.
+
+    The nudge is a Gaussian step clamped to [0, 1]. `rate` is the
+    probability per trait (the user-facing mutation slider).
+    """
+    if rate <= 0.0:
+        return g
+    vals = {}
+    for n in TRAIT_NAMES:
+        v = getattr(g, n)
+        if random.random() < rate:
+            v = max(0.0, min(1.0, v + random.gauss(0.0, 0.15)))
+        vals[n] = v
+    return Genome(**vals)
 
 
 # --- phenotype mapping (pure geometry) --------------------------------

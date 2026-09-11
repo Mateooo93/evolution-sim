@@ -1,7 +1,8 @@
 """EvoLab — an artificial ecosystem simulator.
 
 Run:  python main.py
-Controls:  Space = pause/resume, mouse = pause button + speed slider.
+Controls:  Space = pause/resume, mouse = pause button, speed and
+mutation-rate sliders.
 """
 
 import argparse
@@ -49,13 +50,16 @@ def main() -> int:
     header = pygame.Rect(12, 12, WIDTH - 24, 46)
     cy = header.centery
     logo = Label((header.left + 16, cy), "EVOLAB", logo_font, theme.ACCENT)
-    population = Label((146, cy), "Population: 80", font)
-    food = Label((300, cy), "Food: 0", font)
-    traits = Label((420, cy), "avg speed 50%  size 50%", font)
-    pause_btn = Button((640, cy - 14, 100, 28), "Pause", font)
-    speed_value = Label((WIDTH - 416, cy), "1.0x", font)
-    speed_slider = Slider((WIDTH - 360, cy - 8, 200, 16), font, 0.25, 20.0, 1.0)
-    hint = Label((WIDTH - 132, cy), "Space", font, theme.PANEL_BORDER)
+    population = Label((140, cy), "Population: 80", font)
+    food = Label((272, cy), "Food: 0", font)
+    generation = Label((362, cy), "Gen: 1", font)
+    traits = Label((444, cy), "avg speed 50%  size 50%", font)
+    pause_btn = Button((650, cy - 14, 100, 28), "Pause", font)
+    mut_label = Label((764, cy), "mut", font, theme.TEXT_DIM)
+    mut_slider = Slider((798, cy - 8, 110, 16), font, 0.001, 0.20, 0.05, step=0.001)
+    mut_value = Label((914, cy), "5.0%", font)
+    speed_value = Label((966, cy), "1.0x", font)
+    speed_slider = Slider((1006, cy - 8, 170, 16), font, 0.25, 20.0, 1.0)
 
     paused = False
     accumulator = 0.0
@@ -74,6 +78,9 @@ def main() -> int:
             if pause_btn.handle(event):
                 paused = not paused
             speed_slider.handle(event)
+            mut_slider.handle(event)
+
+        world.config.mutation_rate = mut_slider.value
 
         if not paused:
             # fixed timestep with accumulator: speed scales the number of
@@ -94,7 +101,9 @@ def main() -> int:
         pygame.draw.rect(screen, theme.PANEL_BORDER, header, width=1, border_radius=8)
         population.set_text(f"Population: {len(world.organisms)}")
         food.set_text(f"Food: {len(world.food)}")
+        generation.set_text(f"Gen: {max((o.generation for o in world.organisms), default=0)}")
         speed_value.set_text(f"{speed_slider.value:.1f}x")
+        mut_value.set_text(f"{mut_slider.value * 100:.1f}%")
         traits.set_text(
             f"avg speed {round(world.trait_average('speed') * 100)}%"
             f"  size {round(world.trait_average('size') * 100)}%"
@@ -102,11 +111,14 @@ def main() -> int:
         logo.draw(screen)
         population.draw(screen)
         food.draw(screen)
+        generation.draw(screen)
         traits.draw(screen)
+        mut_label.draw(screen)
+        mut_slider.draw(screen)
+        mut_value.draw(screen)
         speed_value.draw(screen)
         speed_slider.draw(screen)
         pause_btn.draw(screen)
-        hint.draw(screen)
 
         pygame.display.flip()
         frame += 1

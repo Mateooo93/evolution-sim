@@ -20,5 +20,7 @@ class Organism:
     genome: Genome
     energy: float
     age: float
+    generation: int = 1  # genealogical generation (initial stock is 1)
+    readiness: float = 0.0  # accumulates to 1.0, gated by fertility
     target: Food | None = None  # food currently being chased
     last_sense: float = 0.0  # sim time of the last food scan
