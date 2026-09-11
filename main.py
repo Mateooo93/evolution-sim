@@ -6,6 +6,8 @@ mutation-rate sliders.
 """
 
 import argparse
+import asyncio
+import sys
 
 import pygame
 
@@ -13,6 +15,10 @@ from rendering.renderer import Renderer
 from simulation.ecosystem import Ecosystem, WorldConfig
 from ui import theme
 from ui.widgets import Button, Label, Slider
+
+# True under PyScript/Pyodide (WebAssembly) — the browser drives the
+# frame timing, so the loop must yield with `await` instead of blocking.
+IN_BROWSER = sys.platform == "emscripten"
 
 WIDTH, HEIGHT = 1280, 800
 
@@ -22,8 +28,19 @@ STEP = 1 / 60
 # when the window is dragged/backgrounded at high speed.
 MAX_STEPS_PER_FRAME = 32
 
+def _load_font(names: str, size: int, bold: bool = False):
+    """SysFont on desktop; falls back to pygame's bundled font where
+    system fonts are unavailable (e.g. the Pyodide web build)."""
+    try:
+        f = pygame.font.SysFont(names, size, bold=bold)
+        if f is not None:
+            return f
+    except Exception:
+        pass
+    return pygame.font.Font(None, size)
 
-def main() -> int:
+
+async def main() -> int:
     parser = argparse.ArgumentParser(description="EvoLab — artificial ecosystem simulator")
     parser.add_argument(
         "--frames", type=int, default=0,
@@ -33,9 +50,8 @@ def main() -> int:
 
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("EvoLab")
-    font = pygame.font.SysFont("dejavusansmono,consolas,monospace", 14)
-    logo_font = pygame.font.SysFont("dejavusans,verdana,sans-serif", 14, bold=True)
+    font = _load_font("dejavusansmono,consolas,monospace", 14)
+    logo_font = _load_font("dejavusans,verdana,sans-serif", 14, bold=True)
     clock = pygame.time.Clock()
 
     world = Ecosystem(
@@ -67,8 +83,14 @@ def main() -> int:
 
     running = True
     while running:
-        # dt in seconds, clamped so a long stall doesn't teleport the sim
-        dt = min(clock.tick(60) / 1000.0, 0.25)
+        # dt in seconds, clamped so a long stall doesn't teleport the sim.
+        # In the browser the page drives the frame: yield to the event loop
+        # and measure elapsed time instead of blocking on the clock.
+        if IN_BROWSER:
+            await asyncio.sleep(1 / 60)
+            dt = min(clock.tick(0) / 1000.0, 0.25)
+        else:
+            dt = min(clock.tick(60) / 1000.0, 0.25)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -130,4 +152,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))

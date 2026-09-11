@@ -20,6 +20,41 @@ errors, run `sudo apt install -y python3-venv python3-pip` first.)
 Controls: `Space` pauses. The header has a pause button, a speed slider,
 and a mutation-rate slider.
 
+## Play in your browser
+
+`web/` holds a browser build of the same game. PyScript runs Python
+(and pygame) as WebAssembly inside the page — no server, no install,
+works on any static host. The first load takes a few seconds while it
+pays for Python from the CDN.
+
+Try it locally:
+
+```bash
+cd web
+python3 -m http.server 8000
+# open http://localhost:8000
+```
+
+`web/evolab.py` is generated from the project sources by
+`web/build.py` — re-run it after changing any module:
+
+```bash
+.venv/bin/python web/build.py
+```
+
+### Deploy to GitHub Pages
+
+```bash
+# from the repo root
+git remote add origin git@github.com:YOURNAME/evolution-sim.git
+git push -u origin master
+git subtree push --prefix web origin gh-pages
+```
+
+Then in the GitHub repo: **Settings → Pages → Build and deployment →
+Source: Deploy from a branch**, pick `gh-pages` / `(root)`. The game
+goes live at `https://YOURNAME.github.io/evolution-sim/`.
+
 ## Architecture
 
 - `simulation/` — pure Python, no pygame: `Ecosystem` holds all state and

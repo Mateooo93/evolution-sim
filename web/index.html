@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <title>EvoLab — artificial life, in your browser</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <link rel="stylesheet" href="https://pyscript.net/releases/2025.7.3/core.css">
+  <script type="module" src="https://pyscript.net/releases/2025.7.3/core.js"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #0b0f14;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #status {
+      margin: 22px 16px 10px;
+      color: #64748b;
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    }
+    #canvas {
+      max-width: 96vw;
+      height: auto;
+      border: 1px solid #1d2733;
+      border-radius: 8px;
+      image-rendering: pixelated;
+    }
+    #err {
+      display: none;
+      color: #f87171;
+      white-space: pre-wrap;
+      max-width: 860px;
+      margin: 8px 16px;
+      font-size: 12px;
+      font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="status">Loading Python in your browser (a few seconds)…</div>
+  <pre id="err"></pre>
+  <canvas id="canvas" width="1280" height="800"></canvas>
+  <script type="py-game" src="evolab.py"></script>
+  <script>
+    // Surface Python-side failures on the page instead of the console.
+    window.addEventListener("unhandledrejection", (e) => {
+      const box = document.getElementById("err");
+      box.style.display = "block";
+      box.textContent = String((e.reason && e.reason.stack) || e.reason);
+    });
+  </script>
+</body>
+</html>
