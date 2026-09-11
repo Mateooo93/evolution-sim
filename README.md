@@ -80,16 +80,30 @@ goes live at `https://YOURNAME.github.io/evolution-sim/`.
   is gated by the fertility trait; the generation number is tracked
   and shown in the header.
 
+  The world starts as a pure herbivore population (aggression pinned to
+  zero). The `aggression` trait then drives continuous predation: each
+  hungry organism hunts weaker neighbours with probability = aggression
+  and forages plant food with probability (1 − aggression). Fleeing a
+  stronger neighbour always outranks everything. A catch is gated on
+  speed — a predator only eats prey it can actually outrun while the
+  prey sprints away — so prey evolve speed to escape, predators evolve
+  speed to chase, and both drift up together (the arms race). Aggression
+  carries a steep upkeep surcharge and a breeding penalty, so carnivores
+  stay a minority instead of wiping the plate.
+
   A spatial hash grid answers neighbor queries in ~O(1) per query
-  regardless of population, which keeps mating (and later, predation)
-  cheap. A slow stream of random immigrants remains as an extinction
-  safety net.
+  regardless of population, which keeps mating and predation cheap. A
+  slow stream of random immigrants remains as an extinction safety net.
 
   The ecosystem records a per-second history (avg speed, avg size,
   population), drawn as sparklines in the bottom-right panel.
 - `rendering/` — draws ecosystem state onto the screen (static background
-  is pre-rendered, blitted every frame). Body radius = size, brightness =
-  energy, heading tick length = speed, so selection is visible on the plate.
+  is pre-rendered, blitted every frame). Organisms are pre-rendered
+  antialiased "orbs" (species colour × body radius × energy brightness)
+  so the per-frame cost is one blit each: body radius = size, brightness =
+  energy, heading tick length = speed, and colour sweeps green → amber →
+  red as aggression rises, so selection and predation are visible on the
+  plate.
 - `ui/` — hand-drawn widgets (button, slider, label) and the theme palette.
 
 The simulation advances on a fixed 60 Hz timestep with an accumulator;

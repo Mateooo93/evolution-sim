@@ -4,10 +4,14 @@ The renderer is a dumb view: it reads simulation state and paints it.
 The static background (fill + grid) is pre-rendered once and blitted
 every frame, so the per-frame cost is one blit plus the organisms.
 
-Traits are drawn directly, so selection is visible on the plate:
+Organisms are drawn from a pre-rendered "orb atlas": antialiased radial
+sprites baked at init for every (species, radius, energy-brightness)
+combination, so the per-frame cost is a single blit per organism with
+smooth soft-edged cells. Traits are still visible on the plate:
     size       -> body radius
     energy     -> body brightness (dim = starving)
     speed      -> heading tick length
+    aggression -> species colour (prey = green, predator = red)
 """
 
 import math
@@ -19,16 +23,60 @@ from simulation.genome import body_radius_px
 from ui import theme
 
 GRID_SPACING = 64
-STARVED = (30, 90, 62)  # color at zero energy
 MAX_TICK = 14  # px at max speed
+RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
+ENERGY_LEVELS = 8  # brightness buckets for the atlas
+AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
+GLOW = 2  # px of soft halo around each orb
+
+# Colors at zero energy (dim) for each species.
+_STARVED_PREY = (30, 90, 62)
+_STARVED_PRED = (94, 38, 38)
 
 
-def _energy_color(energy: float, max_energy: float) -> tuple[int, int, int]:
-    t = max(0.0, min(1.0, energy / max_energy))
-    return tuple(
-        round(starved + (accent - starved) * t)
-        for starved, accent in zip(STARVED, theme.ACCENT)
-    )
+def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return tuple(round(av + (bv - av) * t) for av, bv in zip(a, b))
+
+
+def _orb_color(species: str, level: int) -> tuple[int, int, int]:
+    """Body color for an atlas cell: brightness rises with the energy level."""
+    t = level / (ENERGY_LEVELS - 1) if ENERGY_LEVELS > 1 else 1.0
+    if species == "pred":
+        return _lerp(_STARVED_PRED, theme.PREDATOR, t)
+    return _lerp(_STARVED_PREY, theme.ACCENT, t)
+
+
+def _aggression_color(aggression: float, level: int) -> tuple[int, int, int]:
+    """Body color across the aggression spectrum: herbivore green at low
+    aggression, shifting through amber to carnivore red at high aggression.
+    The energy level still controls brightness (dim = starving).
+    """
+    t = min(1.0, max(0.0, aggression))
+    green = _orb_color("prey", level)
+    red = _orb_color("pred", level)
+    warm = _lerp(green, red, 0.45)  # amber midpoint
+    if t < 0.5:
+        return _lerp(green, warm, t * 2.0)
+    return _lerp(warm, red, (t - 0.5) * 2.0)
+
+
+def _make_orb(color: tuple[int, int, int], radius: int, glow: int = GLOW) -> pygame.Surface:
+    """A soft-edged radial orb: full-colour body fading into the halo."""
+    side = (radius + glow) * 2 + 2
+    surf = pygame.Surface((side, side), pygame.SRCALPHA)
+    c = side // 2
+    # Halo: a thin fading ring outside the body.
+    for rr in range(radius + glow, radius, -1):
+        a = int(255 * (radius + glow - rr + 1) / (glow + 1))
+        pygame.draw.circle(surf, (*color, a), (c, c), rr)
+    # Body in full colour.
+    pygame.draw.circle(surf, (*color, 255), (c, c), radius)
+    # Brighter inner core for depth.
+    core = _lerp(color, (255, 255, 255), 0.35)
+    pygame.draw.circle(surf, (*core, 220), (c, c), max(1, int(radius * 0.7)))
+    inner = _lerp(color, (255, 255, 255), 0.65)
+    pygame.draw.circle(surf, (*inner, 160), (c, c), max(1, int(radius * 0.4)))
+    return surf
 
 
 class Renderer:
@@ -37,6 +85,15 @@ class Renderer:
         self.font = pygame.font.SysFont("dejavusansmono,consolas,monospace", 10)
         w, h = surface.get_size()
         self.background = self._build_background(w, h)
+        self.atlas: dict[tuple[int, int, int], pygame.Surface] = {
+            (agg, radius, lvl): _make_orb(
+                _aggression_color(agg / (AGGRESSION_BUCKETS - 1), lvl), radius
+            )
+            for agg in range(AGGRESSION_BUCKETS)
+            for radius in RADIUS_STEPS
+            for lvl in range(ENERGY_LEVELS)
+        }
+        self.food_sprite = _make_orb(theme.FOOD, 3, glow=1)
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
@@ -53,35 +110,45 @@ class Renderer:
     def render(self, world: Ecosystem) -> None:
         self.surface.blit(self.background, (0, 0))
 
-        # Food under the organisms
+        # Food under the organisms (a soft amber orb, consistent with the cells)
+        fs = self.food_sprite.get_width() // 2
         for f in world.food:
-            pygame.draw.circle(self.surface, theme.FOOD, (int(f.x), int(f.y)), 3)
+            self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
 
         for o in world.organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
+            aggression = o.genome.aggression
+            tick_color = _lerp(theme.HEADING, theme.HEADING_PRED, aggression)
 
-            # heading tick: length encodes speed
+            # heading tick: a short directional notch under the body
             pygame.draw.line(
                 self.surface,
-                theme.HEADING,
+                tick_color,
                 (o.x, o.y),
                 (o.x + math.cos(o.heading) * tick,
                  o.y + math.sin(o.heading) * tick),
                 1,
             )
-            # body: radius encodes size, brightness encodes energy
-            pygame.draw.circle(
-                self.surface,
-                _energy_color(o.energy, world.config.max_energy),
-                (int(o.x), int(o.y)),
-                round(radius),
+            # body: pre-rendered orb (aggression + radius + energy brightness)
+            lvl = min(
+                ENERGY_LEVELS - 1,
+                max(0, int(o.energy / world.config.max_energy * ENERGY_LEVELS)),
             )
+            agg = min(
+                AGGRESSION_BUCKETS - 1,
+                max(0, int(aggression * AGGRESSION_BUCKETS)),
+            )
+            orb = self.atlas[(agg, round(radius), lvl)]
+            self.surface.blit(orb, (int(o.x) - orb.get_width() // 2,
+                                    int(o.y) - orb.get_height() // 2))
+
             # ready to mate: a thin ring around the body
             if o.readiness >= 1.0:
+                ring = _lerp(theme.ACCENT, theme.PREDATOR, aggression)
                 pygame.draw.circle(
                     self.surface,
-                    theme.ACCENT,
+                    ring,
                     (int(o.x), int(o.y)),
                     round(radius) + 2,
                     1,
