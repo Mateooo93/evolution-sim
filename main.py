@@ -117,6 +117,9 @@ async def main() -> int:
         if not snapshots:
             return
         if not replaying:
+            # The scrubber spans exactly what we've recorded, so the end
+            # of the bar is always the newest frame (no dead space).
+            replay_slider.max = max(1, len(snapshots) - 1)
             replaying = True
             paused = True
             replay_idx = 0
@@ -180,9 +183,11 @@ async def main() -> int:
         world.config.mutation_rate = mut_slider.value
 
         if replaying:
-            # Auto-play plunges forward unless the user grabbed the scrub
-            # slider, which hands control over to dragging.
-            if not _manual_seek:
+            if _manual_seek:
+                # The user is scrubbing: the slider position is the frame.
+                replay_idx = min(len(snapshots) - 1, max(0, int(replay_slider.value)))
+            else:
+                # Auto-play: advance the playhead; move the knob along.
                 _replay_acc += dt * speed_slider.value
                 while _replay_acc >= _replay_step and snapshots:
                     _replay_acc -= _replay_step
@@ -190,7 +195,6 @@ async def main() -> int:
                     if replay_idx >= len(snapshots):
                         replay_idx = 0  # loop
                 replay_slider.value = float(replay_idx)
-            replay_idx = min(len(snapshots) - 1, max(0, int(replay_slider.value)))
             replay_frame = snapshots[replay_idx]
             renderer.render(world, selected=None, snapshot=replay_frame)
         else:
@@ -227,9 +231,9 @@ async def main() -> int:
         speed_value.set_text(f"{speed_slider.value:.1f}x")
         mut_value.set_text(f"{mut_slider.value * 100:.1f}%")
         traits.set_text(
-            f"avg speed {round(world.trait_average('speed') * 100)}%"
-            f"  size {round(world.trait_average('size') * 100)}%"
-            f"  agg {round(world.trait_average('aggression') * 100)}%"
+            f"spd {round(world.trait_average('speed') * 100)}%"
+            f"  sz {round(world.trait_average('size') * 100)}%"
+            f"  ag {round(world.trait_average('aggression') * 100)}%"
         )
         logo.draw(screen)
         population.draw(screen)

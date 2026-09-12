@@ -129,7 +129,12 @@ class Renderer:
 
     def _update_trails(self, world: Ecosystem) -> None:
         """Append each living organism's current position to its trail and
-        drop trails for organisms that died. Trail points are kept short."""
+        drop trails for organisms that died. Trail points are kept short.
+        A toroidal wrap (a point suddenly on the far side of the plate)
+        would draw a streak across the whole screen, so wrapping resets
+        the tail instead of connecting the two distant points."""
+        half_w = world.config.width / 2
+        half_h = world.config.height / 2
         seen = set()
         for o in world.organisms:
             seen.add(o.id)
@@ -137,6 +142,9 @@ class Renderer:
             if trail is None:
                 self.trails[o.id] = [(o.x, o.y)]
                 continue
+            lx, ly = trail[-1]
+            if abs(o.x - lx) > half_w or abs(o.y - ly) > half_h:
+                trail.clear()  # wrapped around the world edge
             trail.append((o.x, o.y))
             if len(trail) > TRAIL_LEN:
                 del trail[0]
