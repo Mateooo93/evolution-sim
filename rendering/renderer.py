@@ -100,6 +100,12 @@ class Renderer:
         # each live organism leaves a short fading tail so the plate reads
         # as alive and hunting is legible. Not part of the simulation.
         self.trails: dict[int, list[tuple[float, float]]] = {}
+        # Eat flashes: brief expanding pulses where food was consumed, so
+        # eating reads as an event instead of a silent disappearance. Each
+        # entry is (x, y, age_remaining). Detected by diffing the food set.
+        self.flashes: list[tuple[float, float, float]] = []
+        self._prev_food: set[tuple[int, int]] = set()
+        self._flash_tick = 1.0 / 60.0  # one render *is* one frame of life
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
@@ -168,6 +174,30 @@ class Renderer:
                                  (int(pts[i][0]), int(pts[i][1])),
                                  (int(pts[i + 1][0]), int(pts[i + 1][1])), 1)
 
+    def _update_flashes(self, world: Ecosystem) -> None:
+        """Spawn a pulse wherever food disappeared since the last frame
+        (i.e. was eaten) and age out old pulses."""
+        cur = {(int(f.x), int(f.y)) for f in world.food}
+        for p in self._prev_food - cur:
+            self.flashes.append((float(p[0]), float(p[1]), 0.35))
+        self._prev_food = cur
+        # Age flashes; drop the dead ones.
+        kept = []
+        for x, y, age in self.flashes:
+            age -= self._flash_tick
+            if age > 0:
+                kept.append((x, y, age))
+        self.flashes = kept
+
+    def _draw_flashes(self) -> None:
+        """Draw each eat-pulse as an expanding, fading ring."""
+        for x, y, age in self.flashes:
+            t = age / 0.35  # 1..0 over the pulse's life
+            r = int(round((0.35 - age) * 120)) + 3
+            col = _lerp(theme.FOOD, (255, 200, 80), 1.0 - t)
+            alpha = int(200 * t)
+            pygame.draw.circle(self.surface, (*col, alpha), (int(x), int(y)), r, max(1, int(1 + t * 2)))
+
     def render(self, world: Ecosystem, selected: Organism | None = None,
            snapshot: dict | None = None) -> None:
         """Draw the scene. If a `snapshot` (from simulation.snapshot) is
@@ -187,6 +217,8 @@ class Renderer:
         if live:
             self._update_trails(world)
             self._draw_trails(world)
+            self._update_flashes(world)
+            self._draw_flashes()
 
         selected_pos: tuple[float, float] | None = None
         for o in organisms:

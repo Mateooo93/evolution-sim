@@ -74,10 +74,14 @@ goes live at `https://YOURNAME.github.io/evolution-sim/`.
   ```
 
   The plate starts pre-seeded with food and it then spawns continuously
-  (capped). Food is sensed by vision — range 30–150 px depending on the
-  vision trait, toroidal, re-scanned at most every 0.25 s.
-  Hungry organisms steer toward the nearest food (turn rate drops with
-  size) and eat on contact. They die of starvation or old age.
+  (capped). Food spawns *slower* than the population eats, so the plate
+  visibly clears and refills instead of sitting full — hungry creatures
+  travel for meals and a birth wave can strip the field in seconds.
+  Food is sensed by vision — range 30–150 px depending on the vision
+  trait, toroidal, re-scanned at most every 0.25 s. Hungry organisms
+  steer toward the nearest food (turn rate drops with size) and eat on
+  contact, flashing an expanding amber pulse so every meal is legible.
+  They die of starvation or old age.
 
   Reproduction is local: a ready, energetic organism pairs with a
   ready neighbor within the mating radius. Each parent pays an energy

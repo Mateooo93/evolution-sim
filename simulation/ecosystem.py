@@ -39,10 +39,12 @@ class WorldConfig:
     lifespan_range: float = 480.0  # extra seconds at lifespan trait 1
 
     # --- food -------------------------------------------------------------
-    food_spawn_rate: float = 2.0  # food items per second
-    max_food: int = 300  # food cap (the world is finite)
+    food_spawn_rate: float = 0.9  # food items per second — slower than the
+    #   population eats, so the plate visibly clears and refills (the "it
+    #   is being eaten" pulse) instead of sitting full all the time.
+    max_food: int = 90  # food cap (the world is finite) — keep it scarce
     food_energy: float = 30.0  # energy per food item
-    initial_food_fraction: float = 0.6  # food present at t=0 (world starts alive)
+    initial_food_fraction: float = 0.45  # food present at t=0 (world starts alive)
 
     # --- senses ------------------------------------------------------------
     vision_base: float = 30.0  # sensing range in px at vision trait 0
