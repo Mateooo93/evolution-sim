@@ -1093,16 +1093,23 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
-    def render(self, world: Ecosystem, selected: Organism | None = None) -> None:
+    def render(self, world: Ecosystem, selected: Organism | None = None,
+           snapshot: dict | None = None) -> None:
+        """Draw the scene. If a `snapshot` (from simulation.snapshot) is
+        given it is rendered instead of the live world — used by the
+        time-machine replay. Background and history chart stay live."""
         self.surface.blit(self.background, (0, 0))
+
+        food = world.food if snapshot is None else snapshot["food"]
+        organisms = world.organisms if snapshot is None else snapshot["organisms"]
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
-        for f in world.food:
+        for f in food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
 
         selected_pos: tuple[float, float] | None = None
-        for o in world.organisms:
+        for o in organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
             aggression = o.genome.aggression
@@ -1205,13 +1212,14 @@ class Renderer:
 """EvoLab — an artificial ecosystem simulator.
 
 Run:  python main.py
-Controls:  Space = pause/resume, mouse = pause button, speed and
-mutation-rate sliders.
+Controls:  Space = pause/resume; R = replay the last minute (time machine);
+Esc = stop replay; mouse = pause/Replay buttons, speed & mutation sliders.
 """
 
 import argparse
 import asyncio
 import sys
+from collections import deque
 
 import pygame
 
@@ -1278,17 +1286,44 @@ async def main() -> int:
     mut_value = Label((914, cy), "5.0%", font)
     speed_value = Label((966, cy), "1.0x", font)
     speed_slider = Slider((1006, cy - 8, 170, 16), font, 0.25, 20.0, 1.0)
+    replay_btn = Button((1178, cy - 14, 80, 28), "Replay", font)
 
     paused = False
     accumulator = 0.0
     frame = 0
 
+    # --- time machine (replay) state ----------------------------------
+    # Snapshots of the world taken every SNAP_INTERVAL sim-seconds, kept in
+    # a bounded ring. Press R (or the Replay button) while paused to scrub
+    # back through the last minute or two.
+    SNAP_INTERVAL = 0.25
+    SNAP_MAX = 240  # ~60s of history
+    snapshots: deque = deque(maxlen=SNAP_MAX)
+    _snap_acc = 0.0
+    replaying = False
+    replay_idx = 0
+    _replay_acc = 0.0
+    _replay_step = 0.10  # sim-seconds per snapshot during replay
+
     def _on_widget(pos: tuple[int, int]) -> bool:
         """True if a click point is over the header chrome (where sliders
-        and the pause button live), so plate-clicks don't steal focus."""
+        and buttons live), so plate-clicks don't steal focus."""
         if header.collidepoint(pos):
             return True
-        return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider))
+        return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider, replay_btn))
+
+    def _toggle_replay() -> None:
+        nonlocal replaying, replay_idx, _replay_acc
+        if not snapshots:
+            return
+        if not replaying:
+            replaying = True
+            paused = True
+            replay_idx = 0
+            _replay_acc = 0.0
+        else:
+            replaying = False
+            replay_idx = 0
 
     running = True
     while running:
@@ -1306,10 +1341,22 @@ async def main() -> int:
                 running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 paused = not paused
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                _toggle_replay()
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                if replaying:
+                    _toggle_replay()
+            elif event.type == pygame.KEYDOWN and replaying:
+                if event.key == pygame.K_LEFT and snapshots:
+                    replay_idx = max(0, replay_idx - 1)
+                elif event.key == pygame.K_RIGHT and snapshots:
+                    replay_idx = min(len(snapshots) - 1, replay_idx + 1)
             if pause_btn.handle(event):
                 paused = not paused
             speed_slider.handle(event)
             mut_slider.handle(event)
+            if replay_btn.handle(event):
+                _toggle_replay()
 
             # Click on the plate to select an organism (or clear any
             # selection when clicking empty space, away from the widgets).
@@ -1320,23 +1367,42 @@ async def main() -> int:
 
         world.config.mutation_rate = mut_slider.value
 
-        if not paused:
-            # fixed timestep with accumulator: speed scales the number of
-            # steps per real second, never the size of a step
-            accumulator += dt * speed_slider.value
-            steps = 0
-            while accumulator >= STEP and steps < MAX_STEPS_PER_FRAME:
-                world.update(STEP)
-                accumulator -= STEP
-                steps += 1
-            if steps == MAX_STEPS_PER_FRAME:
-                accumulator = 0.0  # drop the backlog
+        if replaying:
+            # Play back the recorded frames, one per _replay_step of sim
+            # time; the speed slider controls how fast we scrub. Reaching
+            # the newest frame drops back to the live world.
+            _replay_acc += dt * speed_slider.value
+            while _replay_acc >= _replay_step and snapshots:
+                _replay_acc -= _replay_step
+                replay_idx += 1
+                if replay_idx >= len(snapshots):
+                    replay_idx = 0  # loop
+            replay_frame = snapshots[replay_idx]
+            renderer.render(world, selected=None, snapshot=replay_frame)
+        else:
+            if not paused:
+                # fixed timestep with accumulator: speed scales the number
+                # of steps per real second, never the size of a step
+                accumulator += dt * speed_slider.value
+                steps = 0
+                while accumulator >= STEP and steps < MAX_STEPS_PER_FRAME:
+                    world.update(STEP)
+                    accumulator -= STEP
+                    steps += 1
+                if steps == MAX_STEPS_PER_FRAME:
+                    accumulator = 0.0  # drop the backlog
 
-        sel = selected if selected is not None and selected in world.organisms else None
-        renderer.render(world, selected=sel)
-        if sel is not None:
-            renderer.draw_selected_banner(sel, font)
-            inspector.draw(screen, sel, world.config)
+            # Record a snapshot for the time machine on a bounded cadence.
+            _snap_acc += dt * (speed_slider.value if not paused else 0.0)
+            while _snap_acc >= SNAP_INTERVAL:
+                _snap_acc -= SNAP_INTERVAL
+                snapshots.append(capture_snapshot(world))
+
+            sel = selected if selected is not None and selected in world.organisms else None
+            renderer.render(world, selected=sel)
+            if sel is not None:
+                renderer.draw_selected_banner(sel, font)
+                inspector.draw(screen, sel, world.config)
 
         # --- chrome -----------------------------------------------------
         pygame.draw.rect(screen, PANEL, header, border_radius=8)
@@ -1362,6 +1428,17 @@ async def main() -> int:
         speed_value.draw(screen)
         speed_slider.draw(screen)
         pause_btn.draw(screen)
+        replay_btn.draw(screen)
+
+        # Time-machine banner: obvious, but unobtrusive while replaying.
+        if replaying and snapshots:
+            banner = font.render(f"REPLAY  {replay_idx + 1}/{len(snapshots)}   (R or Esc to stop)",
+                                 True, TEXT)
+            bw = banner.get_width()
+            bar = pygame.Rect(WIDTH // 2 - bw // 2 - 10, 66, bw + 20, 24)
+            pygame.draw.rect(screen, PANEL, bar, border_radius=6)
+            pygame.draw.rect(screen, PREDATOR, bar, width=1, border_radius=6)
+            screen.blit(banner, banner.get_rect(center=bar.center))
 
         pygame.display.flip()
         frame += 1

@@ -22,6 +22,11 @@ and a mutation-rate slider. Click any organism to select it — a gold ring
 tracks it and an inspector panel shows its genome as trait bars along
 with its energy, age and role. Click empty space to deselect.
 
+`R` (or the **Replay** button) rewinds into a **time machine**: the world
+records a snapshot every 0.25 s, so you can scrub back through the last
+~60 seconds and watch a predator–prey cycle or an extinction happen. The
+speed slider controls replay speed; `Esc` (or `R`) exits back to live.
+
 ## Play in your browser
 
 `web/` holds a browser build of the same game. PyScript runs Python
@@ -100,6 +105,10 @@ goes live at `https://YOURNAME.github.io/evolution-sim/`.
   The ecosystem records a per-second history (avg speed, avg size,
   population, avg aggression), drawn as a live chart with a legend in the
   bottom-right — watch the aggression line rise as predators appear.
+
+  For the time machine, `simulation/snapshot.py` makes cheap render-only
+  copies of the world (organisms + food) on a 0.25 s cadence; the renderer
+  can draw a past frame without touching the live simulation.
 - `rendering/` — draws ecosystem state onto the screen (static background
   is pre-rendered, blitted every frame). Organisms are pre-rendered
   antialiased "orbs" (species colour × body radius × energy brightness)

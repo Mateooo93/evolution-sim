@@ -108,16 +108,23 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
-    def render(self, world: Ecosystem, selected: Organism | None = None) -> None:
+    def render(self, world: Ecosystem, selected: Organism | None = None,
+           snapshot: dict | None = None) -> None:
+        """Draw the scene. If a `snapshot` (from simulation.snapshot) is
+        given it is rendered instead of the live world — used by the
+        time-machine replay. Background and history chart stay live."""
         self.surface.blit(self.background, (0, 0))
+
+        food = world.food if snapshot is None else snapshot["food"]
+        organisms = world.organisms if snapshot is None else snapshot["organisms"]
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
-        for f in world.food:
+        for f in food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
 
         selected_pos: tuple[float, float] | None = None
-        for o in world.organisms:
+        for o in organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
             aggression = o.genome.aggression
