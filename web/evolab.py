@@ -957,6 +957,17 @@ class Slider:
     def value(self) -> float:
         return self._value
 
+    @value.setter
+    def value(self, v: float) -> None:
+        v = max(self.min, min(self.max, v))
+        self._value = round(v / self.step) * self.step
+
+    @property
+    def dragging(self) -> bool:
+        """True while the user is holding the knob (used to pause timed
+        auto-advance while scrubbing)."""
+        return self._drag
+
     def _set_from_x(self, x: int) -> None:
         t = max(0.0, min(1.0, (x - self.rect.left) / self.rect.width))
         raw = self.min + t * (self.max - self.min)
@@ -1014,6 +1025,7 @@ RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
 ENERGY_LEVELS = 8  # brightness buckets for the atlas
 AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
 GLOW = 2  # px of soft halo around each orb
+TRAIL_LEN = 10  # how many recent positions make up a movement tail
 
 # Colors at zero energy (dim) for each species.
 _STARVED_PREY = (30, 90, 62)
@@ -1080,10 +1092,28 @@ class Renderer:
             for lvl in range(ENERGY_LEVELS)
         }
         self.food_sprite = _make_orb(FOOD, 3, glow=1)
+        # Movement trails (a render-side channel, keyed by organism id):
+        # each live organism leaves a short fading tail so the plate reads
+        # as alive and hunting is legible. Not part of the simulation.
+        self.trails: dict[int, list[tuple[float, float]]] = {}
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
         bg.fill(BG)
+
+        # A soft radial vignette: a darker frame fading in toward a clear centre,
+        # giving the plate depth so blank space doesn't read as "empty".
+        side = 128
+        glow = pygame.Surface((side, side), pygame.SRCALPHA)
+        cc = side // 2
+        # Paint filled circles from the rim inward, each inner circle a bit
+        # lighter, so darkness accumulates at the edge and the middle stays
+        # clear.
+        for rr in range(cc, 0, -4):
+            a = int(210 * (rr / cc))
+            pygame.draw.circle(glow, (0, 0, 0, a), (cc, cc), rr)
+        glow = pygame.transform.smoothscale(glow, (w, h))
+        bg.blit(glow, (0, 0))
 
         grid = pygame.Surface((w, h), pygame.SRCALPHA)
         for x in range(0, w + 1, GRID_SPACING):
@@ -1092,6 +1122,39 @@ class Renderer:
             pygame.draw.line(grid, (*TEXT_DIM, GRID_ALPHA), (0, y), (w, y))
         bg.blit(grid, (0, 0))
         return bg
+
+    def _update_trails(self, world: Ecosystem) -> None:
+        """Append each living organism's current position to its trail and
+        drop trails for organisms that died. Trail points are kept short."""
+        seen = set()
+        for o in world.organisms:
+            seen.add(o.id)
+            trail = self.trails.get(o.id)
+            if trail is None:
+                self.trails[o.id] = [(o.x, o.y)]
+                continue
+            trail.append((o.x, o.y))
+            if len(trail) > TRAIL_LEN:
+                del trail[0]
+        for oid in [k for k in self.trails if k not in seen]:
+            del self.trails[oid]
+
+    def _draw_trails(self, world: Ecosystem) -> None:
+        """A fading tail per organism, tinted by its aggression, so motion
+        and hunting are readable even against the dark plate."""
+        by_id = {o.id: o for o in world.organisms}
+        for oid, pts in self.trails.items():
+            o = by_id.get(oid)
+            if o is None or len(pts) < 2:
+                continue
+            color = _lerp(HEADING, HEADING_PRED, o.genome.aggression)
+            n = len(pts)
+            for i in range(n - 1):
+                # Older segments blend toward the background: a real fade.
+                seg = _lerp(color, BG, 1.0 - (i / n))
+                pygame.draw.line(self.surface, seg,
+                                 (int(pts[i][0]), int(pts[i][1])),
+                                 (int(pts[i + 1][0]), int(pts[i + 1][1])), 1)
 
     def render(self, world: Ecosystem, selected: Organism | None = None,
            snapshot: dict | None = None) -> None:
@@ -1102,11 +1165,16 @@ class Renderer:
 
         food = world.food if snapshot is None else snapshot["food"]
         organisms = world.organisms if snapshot is None else snapshot["organisms"]
+        live = snapshot is None  # trails only make sense on the live world
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
         for f in food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
+
+        if live:
+            self._update_trails(world)
+            self._draw_trails(world)
 
         selected_pos: tuple[float, float] | None = None
         for o in organisms:
@@ -1294,16 +1362,21 @@ async def main() -> int:
 
     # --- time machine (replay) state ----------------------------------
     # Snapshots of the world taken every SNAP_INTERVAL sim-seconds, kept in
-    # a bounded ring. Press R (or the Replay button) while paused to scrub
-    # back through the last minute or two.
+    # a bounded ring. Press R (or the Replay button) to enter replay; drag
+    # the scrub slider (under the header) to scrub through the recording.
     SNAP_INTERVAL = 0.25
     SNAP_MAX = 240  # ~60s of history
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False
     replay_idx = 0
+    _manual_seek = False  # user grabbed the scrubber; stop auto-advance
     _replay_acc = 0.0
-    _replay_step = 0.10  # sim-seconds per snapshot during replay
+    _replay_step = 0.10  # sim-seconds per snapshot while auto-playing
+    # Scrub bar spanning the recorded window, shown only while replaying.
+    replay_slider = Slider(
+        (16, 64, WIDTH - 32, 14), font, 0, SNAP_MAX - 1, 0, step=1,
+    )
 
     def _on_widget(pos: tuple[int, int]) -> bool:
         """True if a click point is over the header chrome (where sliders
@@ -1313,7 +1386,7 @@ async def main() -> int:
         return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider, replay_btn))
 
     def _toggle_replay() -> None:
-        nonlocal replaying, replay_idx, _replay_acc
+        nonlocal replaying, replay_idx, _replay_acc, _manual_seek
         if not snapshots:
             return
         if not replaying:
@@ -1321,6 +1394,8 @@ async def main() -> int:
             paused = True
             replay_idx = 0
             _replay_acc = 0.0
+            _manual_seek = False
+            replay_slider.value = 0.0
         else:
             replaying = False
             replay_idx = 0
@@ -1348,13 +1423,23 @@ async def main() -> int:
                     _toggle_replay()
             elif event.type == pygame.KEYDOWN and replaying:
                 if event.key == pygame.K_LEFT and snapshots:
+                    _manual_seek = True
                     replay_idx = max(0, replay_idx - 1)
+                    replay_slider.value = float(replay_idx)
                 elif event.key == pygame.K_RIGHT and snapshots:
+                    _manual_seek = True
                     replay_idx = min(len(snapshots) - 1, replay_idx + 1)
+                    replay_slider.value = float(replay_idx)
             if pause_btn.handle(event):
                 paused = not paused
             speed_slider.handle(event)
             mut_slider.handle(event)
+            if replaying:
+                replay_slider.handle(event)
+                if replay_slider.dragging:
+                    # Scrub to the dragged frame and pause auto-play.
+                    _manual_seek = True
+                    replay_idx = min(len(snapshots) - 1, int(replay_slider.value))
             if replay_btn.handle(event):
                 _toggle_replay()
 
@@ -1368,15 +1453,17 @@ async def main() -> int:
         world.config.mutation_rate = mut_slider.value
 
         if replaying:
-            # Play back the recorded frames, one per _replay_step of sim
-            # time; the speed slider controls how fast we scrub. Reaching
-            # the newest frame drops back to the live world.
-            _replay_acc += dt * speed_slider.value
-            while _replay_acc >= _replay_step and snapshots:
-                _replay_acc -= _replay_step
-                replay_idx += 1
-                if replay_idx >= len(snapshots):
-                    replay_idx = 0  # loop
+            # Auto-play plunges forward unless the user grabbed the scrub
+            # slider, which hands control over to dragging.
+            if not _manual_seek:
+                _replay_acc += dt * speed_slider.value
+                while _replay_acc >= _replay_step and snapshots:
+                    _replay_acc -= _replay_step
+                    replay_idx += 1
+                    if replay_idx >= len(snapshots):
+                        replay_idx = 0  # loop
+                replay_slider.value = float(replay_idx)
+            replay_idx = min(len(snapshots) - 1, max(0, int(replay_slider.value)))
             replay_frame = snapshots[replay_idx]
             renderer.render(world, selected=None, snapshot=replay_frame)
         else:
@@ -1430,15 +1517,15 @@ async def main() -> int:
         pause_btn.draw(screen)
         replay_btn.draw(screen)
 
-        # Time-machine banner: obvious, but unobtrusive while replaying.
+        # Time-machine scrub bar: a panel under the header with a labelled
+        # slider spanning the recording. Drag it to hunt for a moment.
         if replaying and snapshots:
-            banner = font.render(f"REPLAY  {replay_idx + 1}/{len(snapshots)}   (R or Esc to stop)",
-                                 True, TEXT)
-            bw = banner.get_width()
-            bar = pygame.Rect(WIDTH // 2 - bw // 2 - 10, 66, bw + 20, 24)
-            pygame.draw.rect(screen, PANEL, bar, border_radius=6)
-            pygame.draw.rect(screen, PREDATOR, bar, width=1, border_radius=6)
-            screen.blit(banner, banner.get_rect(center=bar.center))
+            scrub = pygame.Rect(12, 52, WIDTH - 24, 34)
+            pygame.draw.rect(screen, PANEL, scrub, border_radius=6)
+            pygame.draw.rect(screen, PREDATOR, scrub, width=1, border_radius=6)
+            pos = font.render(f"{replay_idx + 1} / {len(snapshots)}", True, TEXT)
+            screen.blit(pos, pos.get_rect(midright=(scrub.right - 8, scrub.centery)))
+            replay_slider.draw(screen)
 
         pygame.display.flip()
         frame += 1

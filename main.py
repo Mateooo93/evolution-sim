@@ -89,16 +89,21 @@ async def main() -> int:
 
     # --- time machine (replay) state ----------------------------------
     # Snapshots of the world taken every SNAP_INTERVAL sim-seconds, kept in
-    # a bounded ring. Press R (or the Replay button) while paused to scrub
-    # back through the last minute or two.
+    # a bounded ring. Press R (or the Replay button) to enter replay; drag
+    # the scrub slider (under the header) to scrub through the recording.
     SNAP_INTERVAL = 0.25
     SNAP_MAX = 240  # ~60s of history
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False
     replay_idx = 0
+    _manual_seek = False  # user grabbed the scrubber; stop auto-advance
     _replay_acc = 0.0
-    _replay_step = 0.10  # sim-seconds per snapshot during replay
+    _replay_step = 0.10  # sim-seconds per snapshot while auto-playing
+    # Scrub bar spanning the recorded window, shown only while replaying.
+    replay_slider = Slider(
+        (16, 64, WIDTH - 32, 14), font, 0, SNAP_MAX - 1, 0, step=1,
+    )
 
     def _on_widget(pos: tuple[int, int]) -> bool:
         """True if a click point is over the header chrome (where sliders
@@ -108,7 +113,7 @@ async def main() -> int:
         return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider, replay_btn))
 
     def _toggle_replay() -> None:
-        nonlocal replaying, replay_idx, _replay_acc
+        nonlocal replaying, replay_idx, _replay_acc, _manual_seek
         if not snapshots:
             return
         if not replaying:
@@ -116,6 +121,8 @@ async def main() -> int:
             paused = True
             replay_idx = 0
             _replay_acc = 0.0
+            _manual_seek = False
+            replay_slider.value = 0.0
         else:
             replaying = False
             replay_idx = 0
@@ -143,13 +150,23 @@ async def main() -> int:
                     _toggle_replay()
             elif event.type == pygame.KEYDOWN and replaying:
                 if event.key == pygame.K_LEFT and snapshots:
+                    _manual_seek = True
                     replay_idx = max(0, replay_idx - 1)
+                    replay_slider.value = float(replay_idx)
                 elif event.key == pygame.K_RIGHT and snapshots:
+                    _manual_seek = True
                     replay_idx = min(len(snapshots) - 1, replay_idx + 1)
+                    replay_slider.value = float(replay_idx)
             if pause_btn.handle(event):
                 paused = not paused
             speed_slider.handle(event)
             mut_slider.handle(event)
+            if replaying:
+                replay_slider.handle(event)
+                if replay_slider.dragging:
+                    # Scrub to the dragged frame and pause auto-play.
+                    _manual_seek = True
+                    replay_idx = min(len(snapshots) - 1, int(replay_slider.value))
             if replay_btn.handle(event):
                 _toggle_replay()
 
@@ -163,15 +180,17 @@ async def main() -> int:
         world.config.mutation_rate = mut_slider.value
 
         if replaying:
-            # Play back the recorded frames, one per _replay_step of sim
-            # time; the speed slider controls how fast we scrub. Reaching
-            # the newest frame drops back to the live world.
-            _replay_acc += dt * speed_slider.value
-            while _replay_acc >= _replay_step and snapshots:
-                _replay_acc -= _replay_step
-                replay_idx += 1
-                if replay_idx >= len(snapshots):
-                    replay_idx = 0  # loop
+            # Auto-play plunges forward unless the user grabbed the scrub
+            # slider, which hands control over to dragging.
+            if not _manual_seek:
+                _replay_acc += dt * speed_slider.value
+                while _replay_acc >= _replay_step and snapshots:
+                    _replay_acc -= _replay_step
+                    replay_idx += 1
+                    if replay_idx >= len(snapshots):
+                        replay_idx = 0  # loop
+                replay_slider.value = float(replay_idx)
+            replay_idx = min(len(snapshots) - 1, max(0, int(replay_slider.value)))
             replay_frame = snapshots[replay_idx]
             renderer.render(world, selected=None, snapshot=replay_frame)
         else:
@@ -225,15 +244,15 @@ async def main() -> int:
         pause_btn.draw(screen)
         replay_btn.draw(screen)
 
-        # Time-machine banner: obvious, but unobtrusive while replaying.
+        # Time-machine scrub bar: a panel under the header with a labelled
+        # slider spanning the recording. Drag it to hunt for a moment.
         if replaying and snapshots:
-            banner = font.render(f"REPLAY  {replay_idx + 1}/{len(snapshots)}   (R or Esc to stop)",
-                                 True, theme.TEXT)
-            bw = banner.get_width()
-            bar = pygame.Rect(WIDTH // 2 - bw // 2 - 10, 66, bw + 20, 24)
-            pygame.draw.rect(screen, theme.PANEL, bar, border_radius=6)
-            pygame.draw.rect(screen, theme.PREDATOR, bar, width=1, border_radius=6)
-            screen.blit(banner, banner.get_rect(center=bar.center))
+            scrub = pygame.Rect(12, 52, WIDTH - 24, 34)
+            pygame.draw.rect(screen, theme.PANEL, scrub, border_radius=6)
+            pygame.draw.rect(screen, theme.PREDATOR, scrub, width=1, border_radius=6)
+            pos = font.render(f"{replay_idx + 1} / {len(snapshots)}", True, theme.TEXT)
+            screen.blit(pos, pos.get_rect(midright=(scrub.right - 8, scrub.centery)))
+            replay_slider.draw(screen)
 
         pygame.display.flip()
         frame += 1

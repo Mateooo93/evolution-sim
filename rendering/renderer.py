@@ -29,6 +29,7 @@ RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
 ENERGY_LEVELS = 8  # brightness buckets for the atlas
 AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
 GLOW = 2  # px of soft halo around each orb
+TRAIL_LEN = 10  # how many recent positions make up a movement tail
 
 # Colors at zero energy (dim) for each species.
 _STARVED_PREY = (30, 90, 62)
@@ -95,10 +96,28 @@ class Renderer:
             for lvl in range(ENERGY_LEVELS)
         }
         self.food_sprite = _make_orb(theme.FOOD, 3, glow=1)
+        # Movement trails (a render-side channel, keyed by organism id):
+        # each live organism leaves a short fading tail so the plate reads
+        # as alive and hunting is legible. Not part of the simulation.
+        self.trails: dict[int, list[tuple[float, float]]] = {}
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
         bg.fill(theme.BG)
+
+        # A soft radial vignette: a darker frame fading in toward a clear centre,
+        # giving the plate depth so blank space doesn't read as "empty".
+        side = 128
+        glow = pygame.Surface((side, side), pygame.SRCALPHA)
+        cc = side // 2
+        # Paint filled circles from the rim inward, each inner circle a bit
+        # lighter, so darkness accumulates at the edge and the middle stays
+        # clear.
+        for rr in range(cc, 0, -4):
+            a = int(210 * (rr / cc))
+            pygame.draw.circle(glow, (0, 0, 0, a), (cc, cc), rr)
+        glow = pygame.transform.smoothscale(glow, (w, h))
+        bg.blit(glow, (0, 0))
 
         grid = pygame.Surface((w, h), pygame.SRCALPHA)
         for x in range(0, w + 1, GRID_SPACING):
@@ -107,6 +126,39 @@ class Renderer:
             pygame.draw.line(grid, (*theme.TEXT_DIM, theme.GRID_ALPHA), (0, y), (w, y))
         bg.blit(grid, (0, 0))
         return bg
+
+    def _update_trails(self, world: Ecosystem) -> None:
+        """Append each living organism's current position to its trail and
+        drop trails for organisms that died. Trail points are kept short."""
+        seen = set()
+        for o in world.organisms:
+            seen.add(o.id)
+            trail = self.trails.get(o.id)
+            if trail is None:
+                self.trails[o.id] = [(o.x, o.y)]
+                continue
+            trail.append((o.x, o.y))
+            if len(trail) > TRAIL_LEN:
+                del trail[0]
+        for oid in [k for k in self.trails if k not in seen]:
+            del self.trails[oid]
+
+    def _draw_trails(self, world: Ecosystem) -> None:
+        """A fading tail per organism, tinted by its aggression, so motion
+        and hunting are readable even against the dark plate."""
+        by_id = {o.id: o for o in world.organisms}
+        for oid, pts in self.trails.items():
+            o = by_id.get(oid)
+            if o is None or len(pts) < 2:
+                continue
+            color = _lerp(theme.HEADING, theme.HEADING_PRED, o.genome.aggression)
+            n = len(pts)
+            for i in range(n - 1):
+                # Older segments blend toward the background: a real fade.
+                seg = _lerp(color, theme.BG, 1.0 - (i / n))
+                pygame.draw.line(self.surface, seg,
+                                 (int(pts[i][0]), int(pts[i][1])),
+                                 (int(pts[i + 1][0]), int(pts[i + 1][1])), 1)
 
     def render(self, world: Ecosystem, selected: Organism | None = None,
            snapshot: dict | None = None) -> None:
@@ -117,11 +169,16 @@ class Renderer:
 
         food = world.food if snapshot is None else snapshot["food"]
         organisms = world.organisms if snapshot is None else snapshot["organisms"]
+        live = snapshot is None  # trails only make sense on the live world
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
         for f in food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
+
+        if live:
+            self._update_trails(world)
+            self._draw_trails(world)
 
         selected_pos: tuple[float, float] | None = None
         for o in organisms:

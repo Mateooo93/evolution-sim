@@ -1,43 +1,45 @@
 DevLog #6 the time machine
 
-you can rewind the whole plate now. hit R (or the Replay button) and it
-flips back into the last sixty seconds, scrubbing through the world a few
-frames at a time while a replay bar counts along. watch a predator actually
-pounce, or rewind to the exact second a whole lineage went extinct and see
-why it died. press R or Esc and it drops you back to live, right where you
-left off.
+you can rewind the whole plate now, and this time it feels like an
+actual editing timeline instead of a trick. hit R (or the Replay button)
+and a scrub bar slides out under the header. drag the handle anywhere in
+the last sixty seconds and the world jumps to exactly that moment - watch
+a predator actually pounce, freeze mid-chase, or find the exact frame a
+lineage went extinct and figure out why the numbers were already going
+wrong before it happened. the speed slider still fast-forwards the
+playhead if you want it to run, and arrow keys nudge single frames.
 
 how it works
 the world was already a pure simulation, so the time machine is just
-snapshots. every quarter second the game copies the entire world - every
+snapshots. every quarter second the game copies the whole world - every
 organism's position, genome, energy, plus all the food - and keeps only
-the last 240 of those frames in a ring, which is about a minute of
-history. when you hit R it stops simulating and just plays those frames
-back. the copy is light because each organism only needs its traits and
-where it is; the "who am i chasing right now" pointers that only matter in
-live time get dropped, so a stored frame is tiny.
+the last 240 of those frames in a ring, about a minute of history. the
+scrub slider is just a head moving over those frames. the copy is light
+because each organism only needs its traits and where it is; the "who am
+i chasing right now" pointers that only matter in live time get dropped,
+so a stored frame is tiny.
 
-the speed slider is the scrubber. crank it up and the replay fast-forwards
-through the extinction, drop it down and you watch one creature's last
-few steps frame by frame. the arrow keys jump a single frame at a time if
-you want to be surgical.
+the plate finally looks alive
+i also took a pass at why it felt empty. two big additions: every
+creature now leaves a short fading tail behind it, tinted by its own
+aggression, so the whole plate shimmers with motion and you can read a
+hunt as an actual streak before the two dots even touch. and there is a
+soft vignette on the background now - a darker frame closing in toward a
+clear middle - so the empty space reads as depth instead of just dead
+black. neither touches the simulation, theyre pure render. the sim stays
+headless-clean, the paint is all in the drawing layer.
 
-why i built it
-the simulator already shows you a population fighting to survive, but you
-only ever saw the present. a predator-prey cycle takes a couple minutes -
-if you blinked you missed it. rewinding is how you actually understand
-what happened instead of just that something did. its also just satisfying
-to rewind twenty seconds to the exact frame a red dot caught a green one
-and watch it from the other angle.
-
-this one was mostly plumbing too, which is the theme of these last
-couple devlogs - making things inspectable and reviewable turns a neat
-demo into a tool you can learn from.
+why the legs matter
+two visual upgrades and one interaction changed how it feels way more
+than any of the core tuning ever did. a pale-yellow tail curling toward
+food tells you exactly what a creature wants before it eats, and a red
+tail moving against the grain of every green one is a predator you will
+spot across the room. you watch the plate and you already know the story.
 
 NEXT
 next im gonna tune the world so predator-prey cycles actually show up as
-clean heartbeat waves in the chart, instead of noisy blobs. that means
-watching tradeoffs between prey birth rate, hunter upkeep and catch speed
-until the population graph breathes. then maybe lineage tracking - click
-a creature and see the whole family tree back to its great-great-
-grandparent.
+clean heartbeat waves in the chart, instead of noisy blobs - watching the
+tradeoffs between prey birth rate, hunter upkeep and catch speed until
+the population graph breathes. then lineage tracking: click a creature
+and see its whole family tree back to a great-great-grandparent, and how
+many living descendants that ancient ancestor actually has now.

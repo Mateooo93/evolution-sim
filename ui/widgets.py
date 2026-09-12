@@ -86,6 +86,17 @@ class Slider:
     def value(self) -> float:
         return self._value
 
+    @value.setter
+    def value(self, v: float) -> None:
+        v = max(self.min, min(self.max, v))
+        self._value = round(v / self.step) * self.step
+
+    @property
+    def dragging(self) -> bool:
+        """True while the user is holding the knob (used to pause timed
+        auto-advance while scrubbing)."""
+        return self._drag
+
     def _set_from_x(self, x: int) -> None:
         t = max(0.0, min(1.0, (x - self.rect.left) / self.rect.width))
         raw = self.min + t * (self.max - self.min)
