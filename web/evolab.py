@@ -313,8 +313,8 @@ class Ecosystem:
         self.time = 0.0  # simulation time in seconds
         self.deaths: dict[str, int] = {"starvation": 0, "age": 0, "eaten": 0}
         self.births = 0  # lifetime count of births
-        # (t, avg_speed, avg_size, population) sampled once per sim second
-        self.history: list[tuple[float, float, float, int]] = []
+        # (t, avg_speed, avg_size, population, avg_aggression) / sim second
+        self.history: list[tuple[float, float, float, int, float]] = []
         self._history_acc = 0.0
         self.grid = SpatialGrid(config.width, config.height)
         self._next_id = 1
@@ -709,6 +709,7 @@ class Ecosystem:
                     self.trait_average("speed"),
                     self.trait_average("size"),
                     len(self.organisms),
+                    self.trait_average("aggression"),
                 )
             )
             if len(self.history) > 300:
@@ -828,6 +829,21 @@ class Ecosystem:
         if not pop:
             return 0.0
         return sum(getattr(o.genome, trait) for o in pop) / len(pop)
+
+    def organism_at(self, x: float, y: float, tolerance: float = 0.0) -> Organism | None:
+        """The nearest organism whose body (radius + tolerance) contains the
+        point, or None. Used to pick organisms by clicking on the plate."""
+        best: Organism | None = None
+        best_d = None
+        for o in self.organisms:
+            r = body_radius_px(o.genome.size) + tolerance
+            dx = o.x - x
+            dy = o.y - y
+            d2 = dx * dx + dy * dy
+            if d2 <= r * r and (best_d is None or d2 < best_d):
+                best = o
+                best_d = d2
+        return best
 
     # --- helpers ----------------------------------------------------------
 
@@ -1077,7 +1093,7 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
-    def render(self, world: Ecosystem) -> None:
+    def render(self, world: Ecosystem, selected: Organism | None = None) -> None:
         self.surface.blit(self.background, (0, 0))
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
@@ -1085,6 +1101,7 @@ class Renderer:
         for f in world.food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
 
+        selected_pos: tuple[float, float] | None = None
         for o in world.organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
@@ -1123,20 +1140,36 @@ class Renderer:
                     round(radius) + 2,
                     1,
                 )
+            if selected is not None and o.id == selected.id:
+                selected_pos = (o.x, o.y)
+
+        # Selection ring: bright and slightly larger, drawn last so it sits on top.
+        if selected is not None and selected_pos is not None:
+            r = round(body_radius_px(selected.genome.size)) + 4
+            pygame.draw.circle(self.surface, (255, 255, 255),
+                               (int(selected_pos[0]), int(selected_pos[1])), r, 2)
+            pygame.draw.circle(self.surface, ACCENT,
+                               (int(selected_pos[0]), int(selected_pos[1])), r + 2, 1)
 
         self._draw_history(world)
 
     def _draw_history(self, world: Ecosystem) -> None:
-        """Bottom-right sparklines: population (accent) and avg speed (dim)."""
+        """Bottom-right chart: population, avg speed and avg aggression over
+        the last few minutes, each drawn in its own way so the arms race is
+        readable at a glance."""
         hist = world.history
         if len(hist) < 2:
             return
         w, h = self.surface.get_size()
-        panel = pygame.Rect(w - 196, h - 80, 184, 68)
+        panel = pygame.Rect(w - 196, h - 84, 184, 74)
         pygame.draw.rect(self.surface, PANEL, panel, border_radius=6)
         pygame.draw.rect(self.surface, PANEL_BORDER, panel, width=1, border_radius=6)
 
-        plot = panel.inflate(-12, -30)
+        title_y = panel.top + 8
+        self.surface.blit(self.font.render("pop / speed / aggression", True, TEXT_DIM),
+                          (panel.left + 6, title_y))
+
+        plot = panel.inflate(-12, -38).move(0, 16)
         n = len(hist)
         pop_scale = float(world.config.max_population)
 
@@ -1150,11 +1183,22 @@ class Renderer:
 
         polyline(3, pop_scale, ACCENT)  # population
         polyline(1, 1.0, TEXT_DIM)  # avg speed
+        polyline(4, 1.0, PREDATOR)  # avg aggression
 
-        self.surface.blit(self.font.render("pop", True, ACCENT),
-                          (panel.left + 6, panel.bottom - 13))
-        self.surface.blit(self.font.render("avg spd", True, TEXT_DIM),
-                          (panel.left + 40, panel.bottom - 13))
+        # Legend (3 dots + labels along the bottom of the panel).
+        legend_y = panel.bottom - 10
+        items = (("pop", ACCENT), ("spd", TEXT_DIM), ("agg", PREDATOR))
+        x = panel.left + 6
+        for label, color in items:
+            pygame.draw.circle(self.surface, color, (x + 3, legend_y), 2)
+            x += 8
+            self.surface.blit(self.font.render(label, True, color), (x, legend_y - 5))
+            x += self.font.size(label)[0] + 10
+
+    def draw_selected_banner(self, o: Organism, font: pygame.font.Font) -> None:
+        """A small readout pinned under the selected organism with its id."""
+        self.surface.blit(font.render(f"#{o.id}", True, (255, 255, 255)),
+                          (int(o.x) - 8, int(o.y) + 6))
 
 
 # ===== main.py =====
@@ -1217,6 +1261,8 @@ async def main() -> int:
         )
     )
     renderer = Renderer(screen)
+    inspector = Inspector(font)
+    selected: object | None = None  # the Organism currently picked
 
     # --- header chrome -------------------------------------------------
     header = pygame.Rect(12, 12, WIDTH - 24, 46)
@@ -1236,6 +1282,13 @@ async def main() -> int:
     paused = False
     accumulator = 0.0
     frame = 0
+
+    def _on_widget(pos: tuple[int, int]) -> bool:
+        """True if a click point is over the header chrome (where sliders
+        and the pause button live), so plate-clicks don't steal focus."""
+        if header.collidepoint(pos):
+            return True
+        return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider))
 
     running = True
     while running:
@@ -1258,6 +1311,13 @@ async def main() -> int:
             speed_slider.handle(event)
             mut_slider.handle(event)
 
+            # Click on the plate to select an organism (or clear any
+            # selection when clicking empty space, away from the widgets).
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if not _on_widget(event.pos):
+                    picked = world.organism_at(event.pos[0], event.pos[1], tolerance=2)
+                    selected = picked if picked is not None else None
+
         world.config.mutation_rate = mut_slider.value
 
         if not paused:
@@ -1272,7 +1332,11 @@ async def main() -> int:
             if steps == MAX_STEPS_PER_FRAME:
                 accumulator = 0.0  # drop the backlog
 
-        renderer.render(world)
+        sel = selected if selected is not None and selected in world.organisms else None
+        renderer.render(world, selected=sel)
+        if sel is not None:
+            renderer.draw_selected_banner(sel, font)
+            inspector.draw(screen, sel, world.config)
 
         # --- chrome -----------------------------------------------------
         pygame.draw.rect(screen, PANEL, header, border_radius=8)
@@ -1285,6 +1349,7 @@ async def main() -> int:
         traits.set_text(
             f"avg speed {round(world.trait_average('speed') * 100)}%"
             f"  size {round(world.trait_average('size') * 100)}%"
+            f"  agg {round(world.trait_average('aggression') * 100)}%"
         )
         logo.draw(screen)
         population.draw(screen)

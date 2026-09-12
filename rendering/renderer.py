@@ -20,6 +20,7 @@ import pygame
 
 from simulation.ecosystem import Ecosystem
 from simulation.genome import body_radius_px
+from simulation.types import Organism
 from ui import theme
 
 GRID_SPACING = 64
@@ -107,7 +108,7 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
-    def render(self, world: Ecosystem) -> None:
+    def render(self, world: Ecosystem, selected: Organism | None = None) -> None:
         self.surface.blit(self.background, (0, 0))
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
@@ -115,6 +116,7 @@ class Renderer:
         for f in world.food:
             self.surface.blit(self.food_sprite, (int(f.x) - fs, int(f.y) - fs))
 
+        selected_pos: tuple[float, float] | None = None
         for o in world.organisms:
             radius = body_radius_px(o.genome.size)
             tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
@@ -153,20 +155,36 @@ class Renderer:
                     round(radius) + 2,
                     1,
                 )
+            if selected is not None and o.id == selected.id:
+                selected_pos = (o.x, o.y)
+
+        # Selection ring: bright and slightly larger, drawn last so it sits on top.
+        if selected is not None and selected_pos is not None:
+            r = round(body_radius_px(selected.genome.size)) + 4
+            pygame.draw.circle(self.surface, (255, 255, 255),
+                               (int(selected_pos[0]), int(selected_pos[1])), r, 2)
+            pygame.draw.circle(self.surface, theme.ACCENT,
+                               (int(selected_pos[0]), int(selected_pos[1])), r + 2, 1)
 
         self._draw_history(world)
 
     def _draw_history(self, world: Ecosystem) -> None:
-        """Bottom-right sparklines: population (accent) and avg speed (dim)."""
+        """Bottom-right chart: population, avg speed and avg aggression over
+        the last few minutes, each drawn in its own way so the arms race is
+        readable at a glance."""
         hist = world.history
         if len(hist) < 2:
             return
         w, h = self.surface.get_size()
-        panel = pygame.Rect(w - 196, h - 80, 184, 68)
+        panel = pygame.Rect(w - 196, h - 84, 184, 74)
         pygame.draw.rect(self.surface, theme.PANEL, panel, border_radius=6)
         pygame.draw.rect(self.surface, theme.PANEL_BORDER, panel, width=1, border_radius=6)
 
-        plot = panel.inflate(-12, -30)
+        title_y = panel.top + 8
+        self.surface.blit(self.font.render("pop / speed / aggression", True, theme.TEXT_DIM),
+                          (panel.left + 6, title_y))
+
+        plot = panel.inflate(-12, -38).move(0, 16)
         n = len(hist)
         pop_scale = float(world.config.max_population)
 
@@ -180,8 +198,19 @@ class Renderer:
 
         polyline(3, pop_scale, theme.ACCENT)  # population
         polyline(1, 1.0, theme.TEXT_DIM)  # avg speed
+        polyline(4, 1.0, theme.PREDATOR)  # avg aggression
 
-        self.surface.blit(self.font.render("pop", True, theme.ACCENT),
-                          (panel.left + 6, panel.bottom - 13))
-        self.surface.blit(self.font.render("avg spd", True, theme.TEXT_DIM),
-                          (panel.left + 40, panel.bottom - 13))
+        # Legend (3 dots + labels along the bottom of the panel).
+        legend_y = panel.bottom - 10
+        items = (("pop", theme.ACCENT), ("spd", theme.TEXT_DIM), ("agg", theme.PREDATOR))
+        x = panel.left + 6
+        for label, color in items:
+            pygame.draw.circle(self.surface, color, (x + 3, legend_y), 2)
+            x += 8
+            self.surface.blit(self.font.render(label, True, color), (x, legend_y - 5))
+            x += self.font.size(label)[0] + 10
+
+    def draw_selected_banner(self, o: Organism, font: pygame.font.Font) -> None:
+        """A small readout pinned under the selected organism with its id."""
+        self.surface.blit(font.render(f"#{o.id}", True, (255, 255, 255)),
+                          (int(o.x) - 8, int(o.y) + 6))

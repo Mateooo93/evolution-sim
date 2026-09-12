@@ -18,7 +18,9 @@ common on Ubuntu/Pop!_OS without the `python3-venv` package. If it
 errors, run `sudo apt install -y python3-venv python3-pip` first.)
 
 Controls: `Space` pauses. The header has a pause button, a speed slider,
-and a mutation-rate slider.
+and a mutation-rate slider. Click any organism to select it — a gold ring
+tracks it and an inspector panel shows its genome as trait bars along
+with its energy, age and role. Click empty space to deselect.
 
 ## Play in your browser
 
@@ -96,7 +98,8 @@ goes live at `https://YOURNAME.github.io/evolution-sim/`.
   slow stream of random immigrants remains as an extinction safety net.
 
   The ecosystem records a per-second history (avg speed, avg size,
-  population), drawn as sparklines in the bottom-right panel.
+  population, avg aggression), drawn as a live chart with a legend in the
+  bottom-right — watch the aggression line rise as predators appear.
 - `rendering/` — draws ecosystem state onto the screen (static background
   is pre-rendered, blitted every frame). Organisms are pre-rendered
   antialiased "orbs" (species colour × body radius × energy brightness)
@@ -104,7 +107,8 @@ goes live at `https://YOURNAME.github.io/evolution-sim/`.
   energy, heading tick length = speed, and colour sweeps green → amber →
   red as aggression rises, so selection and predation are visible on the
   plate.
-- `ui/` — hand-drawn widgets (button, slider, label) and the theme palette.
+- `ui/` — hand-drawn widgets (button, slider, label), the theme palette,
+  and the organism `Inspector` (a selected creature's trait bars).
 
 The simulation advances on a fixed 60 Hz timestep with an accumulator;
 the speed control scales how many steps run per real second, never the

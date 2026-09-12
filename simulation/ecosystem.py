@@ -108,8 +108,8 @@ class Ecosystem:
         self.time = 0.0  # simulation time in seconds
         self.deaths: dict[str, int] = {"starvation": 0, "age": 0, "eaten": 0}
         self.births = 0  # lifetime count of births
-        # (t, avg_speed, avg_size, population) sampled once per sim second
-        self.history: list[tuple[float, float, float, int]] = []
+        # (t, avg_speed, avg_size, population, avg_aggression) / sim second
+        self.history: list[tuple[float, float, float, int, float]] = []
         self._history_acc = 0.0
         self.grid = SpatialGrid(config.width, config.height)
         self._next_id = 1
@@ -504,6 +504,7 @@ class Ecosystem:
                     self.trait_average("speed"),
                     self.trait_average("size"),
                     len(self.organisms),
+                    self.trait_average("aggression"),
                 )
             )
             if len(self.history) > 300:
@@ -623,6 +624,21 @@ class Ecosystem:
         if not pop:
             return 0.0
         return sum(getattr(o.genome, trait) for o in pop) / len(pop)
+
+    def organism_at(self, x: float, y: float, tolerance: float = 0.0) -> Organism | None:
+        """The nearest organism whose body (radius + tolerance) contains the
+        point, or None. Used to pick organisms by clicking on the plate."""
+        best: Organism | None = None
+        best_d = None
+        for o in self.organisms:
+            r = body_radius_px(o.genome.size) + tolerance
+            dx = o.x - x
+            dy = o.y - y
+            d2 = dx * dx + dy * dy
+            if d2 <= r * r and (best_d is None or d2 < best_d):
+                best = o
+                best_d = d2
+        return best
 
     # --- helpers ----------------------------------------------------------
 

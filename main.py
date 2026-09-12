@@ -14,6 +14,7 @@ import pygame
 from rendering.renderer import Renderer
 from simulation.ecosystem import Ecosystem, WorldConfig
 from ui import theme
+from ui.inspector import Inspector
 from ui.widgets import Button, Label, Slider
 
 # True under PyScript/Pyodide (WebAssembly) — the browser drives the
@@ -61,6 +62,8 @@ async def main() -> int:
         )
     )
     renderer = Renderer(screen)
+    inspector = Inspector(font)
+    selected: object | None = None  # the Organism currently picked
 
     # --- header chrome -------------------------------------------------
     header = pygame.Rect(12, 12, WIDTH - 24, 46)
@@ -80,6 +83,13 @@ async def main() -> int:
     paused = False
     accumulator = 0.0
     frame = 0
+
+    def _on_widget(pos: tuple[int, int]) -> bool:
+        """True if a click point is over the header chrome (where sliders
+        and the pause button live), so plate-clicks don't steal focus."""
+        if header.collidepoint(pos):
+            return True
+        return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider))
 
     running = True
     while running:
@@ -102,6 +112,13 @@ async def main() -> int:
             speed_slider.handle(event)
             mut_slider.handle(event)
 
+            # Click on the plate to select an organism (or clear any
+            # selection when clicking empty space, away from the widgets).
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                if not _on_widget(event.pos):
+                    picked = world.organism_at(event.pos[0], event.pos[1], tolerance=2)
+                    selected = picked if picked is not None else None
+
         world.config.mutation_rate = mut_slider.value
 
         if not paused:
@@ -116,7 +133,11 @@ async def main() -> int:
             if steps == MAX_STEPS_PER_FRAME:
                 accumulator = 0.0  # drop the backlog
 
-        renderer.render(world)
+        sel = selected if selected is not None and selected in world.organisms else None
+        renderer.render(world, selected=sel)
+        if sel is not None:
+            renderer.draw_selected_banner(sel, font)
+            inspector.draw(screen, sel, world.config)
 
         # --- chrome -----------------------------------------------------
         pygame.draw.rect(screen, theme.PANEL, header, border_radius=8)
@@ -129,6 +150,7 @@ async def main() -> int:
         traits.set_text(
             f"avg speed {round(world.trait_average('speed') * 100)}%"
             f"  size {round(world.trait_average('size') * 100)}%"
+            f"  agg {round(world.trait_average('aggression') * 100)}%"
         )
         logo.draw(screen)
         population.draw(screen)
