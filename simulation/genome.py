@@ -1,11 +1,12 @@
 """Heritable traits: the genome and its mapping to visible phenotypes.
 
 Every trait is a float in [0, 1]. Higher is not always better — each
-trait carries a tradeoff enforced in `energy_drain_per_s` and friends.
+trait carries a tradeoff enforced in `Ecosystem._drain` and friends.
 
-Wired into the simulation right now: speed, size, metabolism, lifespan,
-efficiency, vision (sensing), fertility (reproduction). Still dormant:
-aggression (predation).
+All eight traits are live: speed and size set how a body moves and what
+it costs, vision sets sensing range, metabolism and efficiency set the
+burn, fertility sets breeding readiness, lifespan sets the age limit,
+and aggression splits the population between foragers and hunters.
 """
 
 import random
@@ -23,15 +24,30 @@ TRAIT_NAMES = (
 )
 
 
+# Where the aggression spectrum divides into readable roles. These are
+# labels for the UI only — behaviour is continuous.
+PREY_MAX = 0.35
+PREDATOR_MIN = 0.70
+
+
+def role_of(aggression: float) -> str:
+    """'prey' | 'mixed' | 'predator' — a display label for a trait value."""
+    if aggression >= PREDATOR_MIN:
+        return "predator"
+    if aggression >= PREY_MAX:
+        return "mixed"
+    return "prey"
+
+
 @dataclass(slots=True)
 class Genome:
     speed: float  # faster movement, higher movement upkeep
-    size: float  # bigger body, higher upkeep, bigger target
-    vision: float  # sensing range (food/predators) — dormant
+    size: float  # bigger body, higher upkeep, easier to spot
+    vision: float  # sensing range for food and neighbours
     metabolism: float  # base energy burn rate
-    fertility: float  # reproduction readiness — dormant
+    fertility: float  # how fast breeding readiness accumulates
     lifespan: float  # max age in seconds
-    aggression: float  # predator behavior — dormant
+    aggression: float  # hunt-vs-forage split (predator behaviour)
     efficiency: float  # lowers every energy cost
 
 

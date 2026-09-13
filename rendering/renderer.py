@@ -1,118 +1,87 @@
-"""Draws the ecosystem onto a pygame surface.
+"""Draws the ecosystem onto the plate surface.
 
-The renderer is a dumb view: it reads simulation state and paints it.
-The static background (fill + grid) is pre-rendered once and blitted
-every frame, so the per-frame cost is one blit plus the organisms.
+The renderer is a dumb view: it reads simulation state and paints it. It
+owns a surface the size of the world (the plate), and the app blits that
+surface into the layout — so the simulation never learns where it is on
+screen.
 
-Organisms are drawn from a pre-rendered "orb atlas": antialiased radial
-sprites baked at init for every (species, radius, energy-brightness)
-combination, so the per-frame cost is a single blit per organism with
-smooth soft-edged cells. Traits are still visible on the plate:
+The static background (fill + vignette + grid) is pre-rendered once and
+blitted every frame, and organisms are drawn from a pre-rendered "orb
+atlas" baked at init for every (aggression, radius, energy-brightness)
+combination, so the per-frame cost is one blit each. Traits stay visible:
     size       -> body radius
     energy     -> body brightness (dim = starving)
     speed      -> heading tick length
-    aggression -> species colour (prey = green, predator = red)
+    aggression -> colour, green through amber to red
+
+Two other channels are pure render and never touch the simulation:
+movement trails (a fading tail per organism, tinted by aggression) and
+event pulses (an expanding ring where something happened — a meal, a
+kill, an arrival). The world reports *that* things happened; the plate
+decides how to show it.
 """
 
 import math
 
 import pygame
 
+from rendering.orbs import (
+    AGGRESSION_BUCKETS,
+    ENERGY_LEVELS,
+    GLOW,
+    RADIUS_STEPS,
+    aggression_bucket,
+    energy_level,
+    lerp,
+    make_orb,
+    orb_color,
+)
 from simulation.ecosystem import Ecosystem
 from simulation.genome import body_radius_px
-from simulation.types import Organism
+from simulation.types import Event, Organism
 from ui import theme
+from ui.fonts import MONO, load_font
 
 GRID_SPACING = 64
 MAX_TICK = 14  # px at max speed
-RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
-ENERGY_LEVELS = 8  # brightness buckets for the atlas
-AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
-GLOW = 2  # px of soft halo around each orb
 TRAIL_LEN = 10  # how many recent positions make up a movement tail
 
-# Colors at zero energy (dim) for each species.
-_STARVED_PREY = (30, 90, 62)
-_STARVED_PRED = (94, 38, 38)
-
-
-def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
-    return tuple(round(av + (bv - av) * t) for av, bv in zip(a, b))
-
-
-def _orb_color(species: str, level: int) -> tuple[int, int, int]:
-    """Body color for an atlas cell: brightness rises with the energy level."""
-    t = level / (ENERGY_LEVELS - 1) if ENERGY_LEVELS > 1 else 1.0
-    if species == "pred":
-        return _lerp(_STARVED_PRED, theme.PREDATOR, t)
-    return _lerp(_STARVED_PREY, theme.ACCENT, t)
-
-
-def _aggression_color(aggression: float, level: int) -> tuple[int, int, int]:
-    """Body color across the aggression spectrum: herbivore green at low
-    aggression, shifting through amber to carnivore red at high aggression.
-    The energy level still controls brightness (dim = starving).
-    """
-    t = min(1.0, max(0.0, aggression))
-    green = _orb_color("prey", level)
-    red = _orb_color("pred", level)
-    warm = _lerp(green, red, 0.45)  # amber midpoint
-    if t < 0.5:
-        return _lerp(green, warm, t * 2.0)
-    return _lerp(warm, red, (t - 0.5) * 2.0)
-
-
-def _make_orb(color: tuple[int, int, int], radius: int, glow: int = GLOW) -> pygame.Surface:
-    """A soft-edged radial orb: full-colour body fading into the halo."""
-    side = (radius + glow) * 2 + 2
-    surf = pygame.Surface((side, side), pygame.SRCALPHA)
-    c = side // 2
-    # Halo: a thin fading ring outside the body.
-    for rr in range(radius + glow, radius, -1):
-        a = int(255 * (radius + glow - rr + 1) / (glow + 1))
-        pygame.draw.circle(surf, (*color, a), (c, c), rr)
-    # Body in full colour.
-    pygame.draw.circle(surf, (*color, 255), (c, c), radius)
-    # Brighter inner core for depth.
-    core = _lerp(color, (255, 255, 255), 0.35)
-    pygame.draw.circle(surf, (*core, 220), (c, c), max(1, int(radius * 0.7)))
-    inner = _lerp(color, (255, 255, 255), 0.65)
-    pygame.draw.circle(surf, (*inner, 160), (c, c), max(1, int(radius * 0.4)))
-    return surf
+# Pulse looks, keyed by the kind of event that caused them:
+#   (ring colour, life in seconds, px the ring grows to)
+PULSES = {
+    "ate": (theme.FOOD_HI, 0.35, 26.0),
+    "eaten": (theme.PREDATOR, 0.55, 40.0),
+    "arrived": (theme.TEXT, 0.6, 34.0),
+}
 
 
 class Renderer:
-    def __init__(self, surface: pygame.Surface) -> None:
-        self.surface = surface
-        self.font = pygame.font.SysFont("dejavusansmono,consolas,monospace", 10)
-        w, h = surface.get_size()
+    def __init__(self, size: tuple[int, int]) -> None:
+        self.surface = pygame.Surface(size)
+        self.font = load_font(MONO, 10)
+        w, h = size
         self.background = self._build_background(w, h)
         self.atlas: dict[tuple[int, int, int], pygame.Surface] = {
-            (agg, radius, lvl): _make_orb(
-                _aggression_color(agg / (AGGRESSION_BUCKETS - 1), lvl), radius
-            )
+            (agg, radius, lvl): make_orb(orb_color(agg / (AGGRESSION_BUCKETS - 1), lvl), radius)
             for agg in range(AGGRESSION_BUCKETS)
             for radius in RADIUS_STEPS
             for lvl in range(ENERGY_LEVELS)
         }
-        self.food_sprite = _make_orb(theme.FOOD, 3, glow=1)
-        # Movement trails (a render-side channel, keyed by organism id):
-        # each live organism leaves a short fading tail so the plate reads
-        # as alive and hunting is legible. Not part of the simulation.
+        self.food_sprite = make_orb(theme.FOOD, 3, glow=1)
+        # Movement trails (keyed by organism id), so the plate reads as
+        # alive and a hunt is a visible streak before the dots touch.
         self.trails: dict[int, list[tuple[float, float]]] = {}
-        # Eat flashes: brief expanding pulses where food was consumed, so
-        # eating reads as an event instead of a silent disappearance. Each
-        # entry is (x, y, age_remaining). Detected by diffing the food set.
-        self.flashes: list[tuple[float, float, float]] = []
-        self._prev_food: set[tuple[int, int]] = set()
-        self._flash_tick = 1.0 / 60.0  # one render *is* one frame of life
+        # Pulses: (x, y, seconds_left, life, colour, growth in px).
+        self.pulses: list[tuple[float, float, float, float, tuple[int, int, int], float]] = []
+
+    # --- background -------------------------------------------------------
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
         bg.fill(theme.BG)
 
-        # A soft radial vignette: a darker frame fading in toward a clear centre,
-        # giving the plate depth so blank space doesn't read as "empty".
+        # A soft radial vignette: a darker frame fading in toward a clear
+        # centre, so blank space reads as depth instead of dead black.
         side = 128
         glow = pygame.Surface((side, side), pygame.SRCALPHA)
         cc = side // 2
@@ -122,8 +91,7 @@ class Renderer:
         for rr in range(cc, 0, -4):
             a = int(210 * (rr / cc))
             pygame.draw.circle(glow, (0, 0, 0, a), (cc, cc), rr)
-        glow = pygame.transform.smoothscale(glow, (w, h))
-        bg.blit(glow, (0, 0))
+        bg.blit(pygame.transform.smoothscale(glow, (w, h)), (0, 0))
 
         grid = pygame.Surface((w, h), pygame.SRCALPHA)
         for x in range(0, w + 1, GRID_SPACING):
@@ -133,12 +101,43 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
+    # --- events -----------------------------------------------------------
+
+    def consume(self, events: list[Event]) -> None:
+        """Turn this frame's events into pulses on the plate."""
+        for e in events:
+            look = PULSES.get(e.kind)
+            if look is not None:
+                color, life, grow = look
+                self.pulses.append((e.x, e.y, life, life, color, grow))
+
+    def _age_pulses(self, dt: float) -> None:
+        if not self.pulses:
+            return
+        kept = []
+        for x, y, left, life, color, grow in self.pulses:
+            left -= dt
+            if left > 0.0:
+                kept.append((x, y, left, life, color, grow))
+        self.pulses = kept
+
+    def _draw_pulses(self) -> None:
+        """Each pulse is an expanding, fading ring — a meal, a kill, an arrival."""
+        for x, y, left, life, color, grow in self.pulses:
+            t = left / life  # 1 -> 0 over the pulse's life
+            radius = round((1.0 - t) * grow) + 3
+            pygame.draw.circle(
+                self.surface, (*color, int(190 * t)), (int(x), int(y)),
+                radius, max(1, int(1 + t * 2)),
+            )
+
+    # --- trails -----------------------------------------------------------
+
     def _update_trails(self, world: Ecosystem) -> None:
-        """Append each living organism's current position to its trail and
-        drop trails for organisms that died. Trail points are kept short.
-        A toroidal wrap (a point suddenly on the far side of the plate)
-        would draw a streak across the whole screen, so wrapping resets
-        the tail instead of connecting the two distant points."""
+        """Append each living organism's position to its trail and forget
+        the dead. A toroidal wrap (a point suddenly on the far side of the
+        plate) would draw a streak across the whole screen, so wrapping
+        resets the tail instead of connecting the two distant points."""
         half_w = world.config.width / 2
         half_h = world.config.height / 2
         seen = set()
@@ -159,55 +158,38 @@ class Renderer:
 
     def _draw_trails(self, world: Ecosystem) -> None:
         """A fading tail per organism, tinted by its aggression, so motion
-        and hunting are readable even against the dark plate."""
+        and hunting are readable even against the dark plate.
+
+        Drawn as two polylines per creature — a dim tail with a brighter
+        leading edge — rather than one blended line per segment: at a few
+        hundred creatures the per-segment version spends more time in the
+        drawing layer than the rest of the frame put together.
+        """
         by_id = {o.id: o for o in world.organisms}
         for oid, pts in self.trails.items():
             o = by_id.get(oid)
             if o is None or len(pts) < 2:
                 continue
-            color = _lerp(theme.HEADING, theme.HEADING_PRED, o.genome.aggression)
-            n = len(pts)
-            for i in range(n - 1):
-                # Older segments blend toward the background: a real fade.
-                seg = _lerp(color, theme.BG, 1.0 - (i / n))
-                pygame.draw.line(self.surface, seg,
-                                 (int(pts[i][0]), int(pts[i][1])),
-                                 (int(pts[i + 1][0]), int(pts[i + 1][1])), 1)
+            color = lerp(theme.HEADING, theme.HEADING_PRED, o.genome.aggression)
+            if len(pts) > 4:
+                pygame.draw.lines(self.surface, lerp(color, theme.BG, 0.6), False, pts, 1)
+                pygame.draw.lines(self.surface, lerp(color, theme.BG, 0.2), False, pts[-4:], 1)
+            else:
+                pygame.draw.lines(self.surface, lerp(color, theme.BG, 0.4), False, pts, 1)
 
-    def _update_flashes(self, world: Ecosystem) -> None:
-        """Spawn a pulse wherever food disappeared since the last frame
-        (i.e. was eaten) and age out old pulses."""
-        cur = {(int(f.x), int(f.y)) for f in world.food}
-        for p in self._prev_food - cur:
-            self.flashes.append((float(p[0]), float(p[1]), 0.35))
-        self._prev_food = cur
-        # Age flashes; drop the dead ones.
-        kept = []
-        for x, y, age in self.flashes:
-            age -= self._flash_tick
-            if age > 0:
-                kept.append((x, y, age))
-        self.flashes = kept
-
-    def _draw_flashes(self) -> None:
-        """Draw each eat-pulse as an expanding, fading ring."""
-        for x, y, age in self.flashes:
-            t = age / 0.35  # 1..0 over the pulse's life
-            r = int(round((0.35 - age) * 120)) + 3
-            col = _lerp(theme.FOOD, (255, 200, 80), 1.0 - t)
-            alpha = int(200 * t)
-            pygame.draw.circle(self.surface, (*col, alpha), (int(x), int(y)), r, max(1, int(1 + t * 2)))
+    # --- frame ------------------------------------------------------------
 
     def render(self, world: Ecosystem, selected: Organism | None = None,
-           snapshot: dict | None = None) -> None:
+               kin: frozenset[int] = frozenset(), snapshot: dict | None = None,
+               dt: float = 1 / 60) -> None:
         """Draw the scene. If a `snapshot` (from simulation.snapshot) is
         given it is rendered instead of the live world — used by the
-        time-machine replay. Background and history chart stay live."""
+        time-machine replay, which has no live trails or pulses."""
         self.surface.blit(self.background, (0, 0))
 
         food = world.food if snapshot is None else snapshot["food"]
         organisms = world.organisms if snapshot is None else snapshot["organisms"]
-        live = snapshot is None  # trails only make sense on the live world
+        live = snapshot is None
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
@@ -217,104 +199,75 @@ class Renderer:
         if live:
             self._update_trails(world)
             self._draw_trails(world)
-            self._update_flashes(world)
-            self._draw_flashes()
+            self._age_pulses(dt)
+            self._draw_pulses()
+
+        # Kin first, so the family line reads as a halo behind the herd.
+        if selected is not None and kin:
+            self._draw_kin(organisms, kin, selected.id)
 
         selected_pos: tuple[float, float] | None = None
         for o in organisms:
-            radius = body_radius_px(o.genome.size)
-            tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
-            aggression = o.genome.aggression
-            tick_color = _lerp(theme.HEADING, theme.HEADING_PRED, aggression)
-
-            # heading tick: a short directional notch under the body
-            pygame.draw.line(
-                self.surface,
-                tick_color,
-                (o.x, o.y),
-                (o.x + math.cos(o.heading) * tick,
-                 o.y + math.sin(o.heading) * tick),
-                1,
-            )
-            # body: pre-rendered orb (aggression + radius + energy brightness)
-            lvl = min(
-                ENERGY_LEVELS - 1,
-                max(0, int(o.energy / world.config.max_energy * ENERGY_LEVELS)),
-            )
-            agg = min(
-                AGGRESSION_BUCKETS - 1,
-                max(0, int(aggression * AGGRESSION_BUCKETS)),
-            )
-            orb = self.atlas[(agg, round(radius), lvl)]
-            self.surface.blit(orb, (int(o.x) - orb.get_width() // 2,
-                                    int(o.y) - orb.get_height() // 2))
-
-            # ready to mate: a thin ring around the body
-            if o.readiness >= 1.0:
-                ring = _lerp(theme.ACCENT, theme.PREDATOR, aggression)
-                pygame.draw.circle(
-                    self.surface,
-                    ring,
-                    (int(o.x), int(o.y)),
-                    round(radius) + 2,
-                    1,
-                )
+            self._draw_organism(o, world.config.max_energy)
             if selected is not None and o.id == selected.id:
                 selected_pos = (o.x, o.y)
 
-        # Selection ring: bright and slightly larger, drawn last so it sits on top.
         if selected is not None and selected_pos is not None:
-            r = round(body_radius_px(selected.genome.size)) + 4
-            pygame.draw.circle(self.surface, (255, 255, 255),
-                               (int(selected_pos[0]), int(selected_pos[1])), r, 2)
-            pygame.draw.circle(self.surface, theme.ACCENT,
-                               (int(selected_pos[0]), int(selected_pos[1])), r + 2, 1)
+            self._draw_reticle(selected_pos, body_radius_px(selected.genome.size), selected.id)
 
-        self._draw_history(world)
+    def _draw_organism(self, o: Organism, max_energy: float) -> None:
+        radius = body_radius_px(o.genome.size)
+        tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
+        aggression = o.genome.aggression
+        tick_color = lerp(theme.HEADING, theme.HEADING_PRED, aggression)
 
-    def _draw_history(self, world: Ecosystem) -> None:
-        """Bottom-right chart: population, avg speed and avg aggression over
-        the last few minutes, each drawn in its own way so the arms race is
-        readable at a glance."""
-        hist = world.history
-        if len(hist) < 2:
-            return
-        w, h = self.surface.get_size()
-        panel = pygame.Rect(w - 196, h - 84, 184, 74)
-        pygame.draw.rect(self.surface, theme.PANEL, panel, border_radius=6)
-        pygame.draw.rect(self.surface, theme.PANEL_BORDER, panel, width=1, border_radius=6)
+        # heading tick: a short directional notch under the body
+        pygame.draw.line(
+            self.surface,
+            tick_color,
+            (o.x, o.y),
+            (o.x + math.cos(o.heading) * tick, o.y + math.sin(o.heading) * tick),
+            1,
+        )
+        orb = self.atlas[
+            (aggression_bucket(aggression), round(radius),
+             energy_level(o.energy, max_energy))
+        ]
+        self.surface.blit(orb, (int(o.x) - orb.get_width() // 2,
+                                int(o.y) - orb.get_height() // 2))
 
-        title_y = panel.top + 8
-        self.surface.blit(self.font.render("pop / speed / aggression", True, theme.TEXT_DIM),
-                          (panel.left + 6, title_y))
+        # ready to mate: a thin ring around the body
+        if o.readiness >= 1.0:
+            ring = lerp(theme.ACCENT, theme.PREDATOR, aggression)
+            pygame.draw.circle(self.surface, ring, (int(o.x), int(o.y)),
+                               round(radius) + 2, 1)
 
-        plot = panel.inflate(-12, -38).move(0, 16)
-        n = len(hist)
-        pop_scale = float(world.config.max_population)
+    def _draw_kin(self, organisms, kin: frozenset[int], selected_id: int) -> None:
+        """A faint ring on every living member of the selected creature's
+        family line, so you can watch a family take over the plate."""
+        for o in organisms:
+            if o.id in kin and o.id != selected_id:
+                pygame.draw.circle(
+                    self.surface, theme.ACCENT_DIM, (int(o.x), int(o.y)),
+                    round(body_radius_px(o.genome.size)) + 3, 1,
+                )
 
-        def polyline(key: int, scale: float, color: tuple[int, int, int]) -> None:
-            pts = []
-            for i, sample in enumerate(hist):
-                x = plot.left + (i / (n - 1)) * plot.width
-                y = plot.bottom - min(1.0, sample[key] / scale) * plot.height
-                pts.append((x, y))
-            pygame.draw.lines(self.surface, color, False, pts, 1)
+    def _draw_reticle(self, pos: tuple[float, float], radius: float, oid: int) -> None:
+        """Corner brackets on the selected creature, plus its id."""
+        x, y = int(pos[0]), int(pos[1])
+        r = round(radius) + 7
+        pygame.draw.circle(self.surface, (255, 255, 255), (x, y), r, 1)
+        arm = 5
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            cx, cy = x + sx * r, y + sy * r
+            pygame.draw.line(self.surface, (255, 255, 255), (cx, cy), (cx - sx * arm, cy), 2)
+            pygame.draw.line(self.surface, (255, 255, 255), (cx, cy), (cx, cy - sy * arm), 2)
+        tag = self.font.render(f"#{oid}", True, theme.BG)
+        box = tag.get_rect(midbottom=(x, y - r - 2)).inflate(6, 3)
+        pygame.draw.rect(self.surface, (255, 255, 255), box, border_radius=3)
+        self.surface.blit(tag, tag.get_rect(center=box.center))
 
-        polyline(3, pop_scale, theme.ACCENT)  # population
-        polyline(1, 1.0, theme.TEXT_DIM)  # avg speed
-        polyline(4, 1.0, theme.PREDATOR)  # avg aggression
-
-        # Legend (3 dots + labels along the bottom of the panel).
-        legend_y = panel.bottom - 10
-        items = (("pop", theme.ACCENT), ("spd", theme.TEXT_DIM), ("agg", theme.PREDATOR))
-        x = panel.left + 6
-        for label, color in items:
-            pygame.draw.circle(self.surface, color, (x + 3, legend_y), 2)
-            x += 8
-            self.surface.blit(self.font.render(label, True, color), (x, legend_y - 5))
-            x += self.font.size(label)[0] + 10
-
-    def draw_selected_banner(self, o: Organism, font: pygame.font.Font) -> None:
-        """A small readout pinned under the selected organism with its id."""
-        self.surface.blit(font.render(f"#{o.id}", True, (255, 255, 255)),
-                          (int(o.x) - 8, int(o.y) + 6))
+    def present(self, screen: pygame.Surface, rect: pygame.Rect) -> None:
+        """Blit the plate into its place in the layout."""
+        screen.blit(self.surface, rect.topleft)
+        pygame.draw.rect(screen, theme.PANEL_BORDER, rect, width=1, border_radius=6)

@@ -1,8 +1,10 @@
 # EvoLab
 
-An interactive artificial-life simulator: virtual organisms compete for
-resources, reproduce, mutate, and evolve. Watch natural selection in real
-time, manipulate the environment, and run evolution experiments.
+An interactive artificial-life simulator: virtual organisms forage, hunt,
+reproduce, mutate and evolve on a finite plate, and you watch natural
+selection happen in real time. Click any creature to read its genome and
+its family line, wake up the environment with the speed and mutation
+sliders, or rewind the last minute and find the moment a lineage died.
 
 ## Run
 
@@ -17,24 +19,62 @@ python3 -m venv .venv
 common on Ubuntu/Pop!_OS without the `python3-venv` package. If it
 errors, run `sudo apt install -y python3-venv python3-pip` first.)
 
-Controls: `Space` pauses. The header has a pause button, a speed slider,
-and a mutation-rate slider. Click any organism to select it — a gold ring
-tracks it and an inspector panel shows its genome as trait bars along
-with its energy, age and role. Click empty space to deselect.
+### Controls
 
-`R` (or the **Replay** button) rewinds into a **time machine**: the world
-records a snapshot every 0.25 s, so you can scrub back through the last
-~60 seconds and watch a predator–prey cycle or an extinction happen. The
-speed slider controls replay speed; `Esc` (or `R`) exits back to live.
+| Control | What it does |
+| --- | --- |
+| `Space` | pause / resume |
+| `R` | enter or leave the time machine (rewind the last ~60 s) |
+| `←` `→` | while replaying, step one recorded frame |
+| `Esc` | leave replay |
+| click a creature | select it: a reticle marks it, the panel shows its genome, energy, age and line |
+| click empty plate | deselect |
+
+The header carries the pause and replay buttons, a speed slider
+(0.25×–20×, the simulator runs as fast as the machine manages) and the
+per-birth mutation rate.
+
+## Reading the plate
+
+Nothing on the plate needs explaining to be useful — that was the design
+goal from the first commit:
+
+| You see | It means |
+| --- | --- |
+| body radius | `size` trait |
+| body brightness | energy — a dim cell is starving |
+| heading tick length | `speed` trait |
+| colour, green → amber → red | `aggression`: pure forager → hunter |
+| thin ring around a cell | ready to mate |
+| fading tail | where it has just been, tinted by aggression, so a hunt is a streak |
+| expanding amber ring | a meal was eaten |
+| expanding red ring | a kill |
+| white reticle + ring | the selected creature |
+| dim green rings | the selected creature's living family line |
+
+## The lab panels
+
+- **ECOSYSTEM** — population, standing food, deepest generation, births
+  and deaths, plus a bar showing how the plate divides between foragers,
+  mixed feeders and hunters.
+- **TRENDS** — population, food and mean aggression over the last five
+  minutes, normalised to their own ranges. This is where evolution is
+  visible as a shape rather than a number: watch mean aggression drift up
+  as hunters appear, or the population breathe as food runs down.
+- **RECENT** — an event log. Kills are logged as they happen (both ids),
+  everything else is summarised once per simulated second. A new deepest
+  generation gets its own line.
+- **SELECTED** — the specimen: the creature drawn as the plate draws it,
+  its role and family line, energy / age / readiness meters, and all eight
+  traits as bars with a tick marking the population average on each, so
+  "is this one fast for its time?" is answerable at a glance.
 
 ## Play in your browser
 
-`web/` holds a browser build of the same game. PyScript runs Python
-(and pygame) as WebAssembly inside the page — no server, no install,
-works on any static host. The first load takes a few seconds while it
-pays for Python from the CDN.
-
-Try it locally:
+`web/` holds a browser build of the same game. PyScript runs Python (and
+pygame) as WebAssembly inside the page — no server, no install, works on
+any static host. The first load takes a few seconds while it pays for
+Python from the CDN.
 
 ```bash
 cd web
@@ -42,8 +82,8 @@ python3 -m http.server 8000
 # open http://localhost:8000
 ```
 
-`web/evolab.py` is generated from the project sources by
-`web/build.py` — re-run it after changing any module:
+`web/evolab.py` is generated from the project sources by `web/build.py` —
+re-run it after changing any module:
 
 ```bash
 .venv/bin/python web/build.py
@@ -59,70 +99,101 @@ git subtree push --prefix web origin gh-pages
 ```
 
 Then in the GitHub repo: **Settings → Pages → Build and deployment →
-Source: Deploy from a branch**, pick `gh-pages` / `(root)`. The game
-goes live at `https://YOURNAME.github.io/evolution-sim/`.
+Source: Deploy from a branch**, pick `gh-pages` / `(root)`. The game goes
+live at `https://YOURNAME.github.io/evolution-sim/`.
 
 ## Architecture
 
 - `simulation/` — pure Python, no pygame: `Ecosystem` holds all state and
   only knows how to advance by `dt` seconds. The UI owns the clock.
-  Organisms carry an 8-trait `Genome`; energy drains from metabolism,
-  movement and body upkeep (trait tradeoffs):
+  - `genome.py` — eight heritable traits in [0, 1] and their phenotype
+    mapping. Higher is not better: each trait carries a price.
+  - `ecosystem.py` — the rules (energy, sensing, predation, mating,
+    immigration), the per-second `Sample` history the chart reads, and an
+    `Event` stream so the view layers can react to what happened without
+    reaching into the world.
+  - `spatial.py` — a toroidal hash grid, rebuilt each tick, answering
+    "nearest neighbour within r" in O(1)-ish time. Food has its own grid.
+  - `snapshot.py` — cheap render-only copies of the world, so the time
+    machine can show a past frame without touching the live simulation.
+- `rendering/` — a dumb view: `renderer.py` paints the world onto its own
+  plate surface (the app blits it into the layout), `orbs.py` holds the
+  colour model and the pre-rendered orb sprites shared with the inspector.
+- `ui/` — `theme.py` (palette and metrics), `fonts.py` (one font stack,
+  with a fallback for the browser), `widgets.py` (button, slider, meter,
+  tiles), `charts.py` (trends), `inspector.py` (the specimen panel) and
+  `hud.py` (layout, chrome, input routing).
+- `tests/` — the simulation contracts, stepping the world directly:
 
+  ```bash
+  .venv/bin/python -m unittest discover -s tests -v
   ```
-  drain/s = (0.30 + 0.55·metabolism) × (1 + 0.6·speed + 0.8·size) × (1 − 0.5·efficiency)
-  ```
-
-  The plate starts pre-seeded with food and it then spawns continuously
-  (capped). Food spawns *slower* than the population eats, so the plate
-  visibly clears and refills instead of sitting full — hungry creatures
-  travel for meals and a birth wave can strip the field in seconds.
-  Food is sensed by vision — range 30–150 px depending on the vision
-  trait, toroidal, re-scanned at most every 0.25 s. Hungry organisms
-  steer toward the nearest food (turn rate drops with size) and eat on
-  contact, flashing an expanding amber pulse so every meal is legible.
-  They die of starvation or old age.
-
-  Reproduction is local: a ready, energetic organism pairs with a
-  ready neighbor within the mating radius. Each parent pays an energy
-  cost and the two produce one baby at their midpoint. The baby's
-  genome is a per-trait crossover of the parents, then a per-trait
-  Gaussian mutation (probability set by the header slider). Readiness
-  is gated by the fertility trait; the generation number is tracked
-  and shown in the header.
-
-  The world starts as a pure herbivore population (aggression pinned to
-  zero). The `aggression` trait then drives continuous predation: each
-  hungry organism hunts weaker neighbours with probability = aggression
-  and forages plant food with probability (1 − aggression). Fleeing a
-  stronger neighbour always outranks everything. A catch is gated on
-  speed — a predator only eats prey it can actually outrun while the
-  prey sprints away — so prey evolve speed to escape, predators evolve
-  speed to chase, and both drift up together (the arms race). Aggression
-  carries a steep upkeep surcharge and a breeding penalty, so carnivores
-  stay a minority instead of wiping the plate.
-
-  A spatial hash grid answers neighbor queries in ~O(1) per query
-  regardless of population, which keeps mating and predation cheap. A
-  slow stream of random immigrants remains as an extinction safety net.
-
-  The ecosystem records a per-second history (avg speed, avg size,
-  population, avg aggression), drawn as a live chart with a legend in the
-  bottom-right — watch the aggression line rise as predators appear.
-
-  For the time machine, `simulation/snapshot.py` makes cheap render-only
-  copies of the world (organisms + food) on a 0.25 s cadence; the renderer
-  can draw a past frame without touching the live simulation.
-- `rendering/` — draws ecosystem state onto the screen (static background
-  is pre-rendered, blitted every frame). Organisms are pre-rendered
-  antialiased "orbs" (species colour × body radius × energy brightness)
-  so the per-frame cost is one blit each: body radius = size, brightness =
-  energy, heading tick length = speed, and colour sweeps green → amber →
-  red as aggression rises, so selection and predation are visible on the
-  plate.
-- `ui/` — hand-drawn widgets (button, slider, label), the theme palette,
-  and the organism `Inspector` (a selected creature's trait bars).
 
 The simulation advances on a fixed 60 Hz timestep with an accumulator;
 the speed control scales how many steps run per real second, never the
 step size.
+
+## The ecology, in numbers
+
+The plate is a flow, not a stock. Food arrives in **patches** (a clump of
+items, a meadow) at a fixed supply rate, and the population settles where
+consumption meets supply — around 180–240 creatures on the default plate
+at the shipped constants, swinging between roughly 120 and 270 over a long
+run as booms and busts play out.
+
+Per-organism energy:
+
+```
+drain/s = (0.22 + 0.40·metabolism) × (1 + 0.9·speed + 0.8·size)
+          × (1 − 0.5·efficiency) × (1 + 0.3·aggression)
+```
+
+Three rules matter more than the constants:
+
+- **Hunting is an endurance chase.** A hunter only targets prey it can
+  out-run, and prey only panic at a threat that is close *and* faster
+  than they are. A sprint needs energy in the tank, so a fresh, alert
+  prey escapes a hunter of similar speed and a tired one does not. Speed
+  decides, and both sides pay for it.
+- **Hunting costs, carrying the gene doesn't.** The chase burns extra
+  energy, so predation has to pay for itself; an aggression gene that is
+  never used is nearly free. This keeps the climb smooth — a mutant that
+  hunts a little pays a little — instead of digging a fitness valley no
+  intermediate can cross.
+- **Specialists win, generalists don't.** A harsh gut is bad at plants
+  (`forage_penalty`), so mid-aggression creatures are mediocre at both
+  trades and the population holds a grazer majority with a hunting tail.
+
+A slow stream of random immigrants (below 28 creatures, at 0.15/s) remains
+as an extinction safety net. It arrives as foragers — a dying world is
+reseeded with prey, not handed a population of hunters — and in a healthy
+run it never fires at all.
+
+What the world does on its own: the population stabilises and breathes,
+mean aggression sits low with a steady trickle of successful hunts, and
+selection visibly drives mean speed up and body size down (the trends
+chart shows it). A specialist predator *caste* does not emerge — the
+aggression continuum settles at a mixed strategy instead. That is an
+honest result of the rules, not a bug: the final devlog goes into it.
+
+## Verifying without a display
+
+The dev machine has no monitor, so everything is checked headless (SDL's
+dummy video driver). `main.py` grows two flags for it:
+
+```bash
+# run 420 frames, save the last one — the frame the checks analyse
+SDL_VIDEODRIVER=dummy .venv/bin/python main.py --frames 420 --seed 5 --shot /tmp/frame.png
+```
+
+- the unit tests step the simulation directly (no window at all);
+- `--frames` + `--shot` render real frames for pixel inspection;
+- the web bundle is checked by executing the concatenated file and running
+  its own loop, in both the desktop and the browser code path.
+
+## Devlogs
+
+Build notes, in order, in `devlog/`: foundation and first organisms, food
+and reproduction, the browser build, predators and paint, the inspector,
+the time machine, making the plate feel eaten, and the final pass over
+predation, ecology and the interface.

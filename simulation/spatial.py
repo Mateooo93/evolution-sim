@@ -28,6 +28,47 @@ class SpatialGrid:
             else:
                 bucket.append(it)
 
+    def nearest(self, x: float, y: float, radius: float, accept=None):
+        """The closest item within `radius` of (x, y), or None.
+
+        Toroidal like `within`, but returns one item instead of a list —
+        which is what sensing wants, and it allocates nothing. `accept`
+        optionally filters candidates (e.g. "is this actually prey?").
+        """
+        c = self.cell
+        half_w, half_h = self.width / 2, self.height / 2
+        best = None
+        best_d2 = radius * radius
+        x0 = int((x - radius) // c)
+        x1 = int((x + radius) // c)
+        y0 = int((y - radius) // c)
+        y1 = int((y + radius) // c)
+
+        for cx in range(x0, x1 + 1):
+            for cy in range(y0, y1 + 1):
+                bucket = self.cells.get((cx % self.cols, cy % self.rows))
+                if not bucket:
+                    continue
+                for it in bucket:
+                    dx = it.x - x
+                    if dx > half_w:
+                        dx -= self.width
+                    elif dx < -half_w:
+                        dx += self.width
+                    if dx * dx > best_d2:
+                        continue  # early reject on x alone
+                    dy = it.y - y
+                    if dy > half_h:
+                        dy -= self.height
+                    elif dy < -half_h:
+                        dy += self.height
+                    d2 = dx * dx + dy * dy
+                    # Tightening `best_d2` as we go prunes later candidates.
+                    if d2 <= best_d2 and (accept is None or accept(it)):
+                        best_d2 = d2
+                        best = it
+        return best
+
     def within(self, x: float, y: float, radius: float) -> list:
         """Items within `radius` of (x, y), toroidal-aware."""
         c = self.cell

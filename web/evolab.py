@@ -7,30 +7,99 @@ Single-file concatenation of the project modules so PyScript's
 
 
 # ===== ui/theme.py =====
-"""Shared color palette — the "scientific research lab" dark theme."""
+"""Shared colour palette and layout metrics — the lab dark theme.
 
+Everything the UI draws pulls its colour from here, so the whole app can
+be re-skinned in one place. Surfaces are stacked (BG < PANEL < RAISED)
+so panels read as layers instead of one flat sheet.
+"""
+
+# --- surfaces ---------------------------------------------------------
 BG = (11, 15, 20)          # window background
 PANEL = (16, 22, 29)       # chrome panels
+RAISED = (23, 31, 41)      # tiles inside a panel, buttons
+RAISED_HOVER = (30, 41, 54)  # tile/button under the cursor
 PANEL_BORDER = (29, 39, 51)
-TEXT = (203, 213, 225)
-TEXT_DIM = (100, 116, 139)
+BORDER_HOVER = (52, 69, 88)
+METER_BG = (26, 35, 46)    # empty part of a bar
+
+# --- text -------------------------------------------------------------
+TEXT = (226, 232, 240)
+TEXT_DIM = (128, 144, 168)
+TEXT_FAINT = (78, 93, 113)
+
+# --- accents ----------------------------------------------------------
 ACCENT = (52, 211, 153)    # organism green / interactive accent
+ACCENT_DIM = (26, 92, 71)  # accents that must sit behind text
 PREDATOR = (248, 113, 113)  # predator organism — warm red, the danger read
+PREDATOR_DIM = (110, 48, 48)
+FOOD = (212, 175, 55)      # food item — amber, distinct from organism green
+FOOD_HI = (251, 211, 92)   # eat-pulse ring, brighter than the orb
 HEADING = (32, 140, 102)   # prey heading tick, dimmer than the dot
 HEADING_PRED = (160, 60, 60)  # predator heading tick
-FOOD = (212, 175, 55)       # food item — amber, distinct from organism green
+GOLD = (250, 204, 21)      # "recording" and highlight chrome
 GRID_ALPHA = 14            # lab-plate grid line alpha (0-255)
+
+# --- layout -----------------------------------------------------------
+MARGIN = 12                # gap between window edge and chrome
+GAP = 10                   # gap between stacked panels
+PANEL_PAD = 12             # padding inside a panel
+HEADER_H = 52
+KEYBAR_H = 26
+SIDEBAR_W = 300
+
+
+# ===== ui/fonts.py =====
+"""The app's font stack, loaded once and passed down to the widgets.
+
+`pygame.font.SysFont` needs system fonts, which the Pyodide (browser)
+build does not have — there it returns a font that cannot render. So
+every font is loaded through `_load`, which falls back to pygame's
+bundled default. One bundle keeps sizes consistent across the UI.
+"""
+
+import pygame
+
+
+def load_font(names: str, size: int, bold: bool = False) -> pygame.font.Font:
+    try:
+        font = pygame.font.SysFont(names, size, bold=bold)
+        if font is not None:
+            return font
+    except Exception:
+        pass
+    return pygame.font.Font(None, size)
+
+
+MONO = "dejavusansmono,consolas,dejavusansmono,monospace"
+SANS = "dejavusans,verdana,arial,sans-serif"
+
+
+class Fonts:
+    """Every text style the interface uses."""
+
+    def __init__(self) -> None:
+        self.logo = load_font(SANS, 19, bold=True)
+        self.tagline = load_font(SANS, 11)
+        self.title = load_font(SANS, 12, bold=True)  # panel + section headers
+        self.body = load_font(MONO, 13)  # stat values, readouts
+        self.small = load_font(MONO, 11)  # labels, legends, ticker
+        self.tiny = load_font(MONO, 10)  # chart axes
+        self.button = load_font(SANS, 13, bold=True)
+        self.metric = load_font(SANS, 22, bold=True)  # big stat-tile numbers
+        self.keycap = load_font(MONO, 10, bold=True)
 
 
 # ===== simulation/genome.py =====
 """Heritable traits: the genome and its mapping to visible phenotypes.
 
 Every trait is a float in [0, 1]. Higher is not always better — each
-trait carries a tradeoff enforced in `energy_drain_per_s` and friends.
+trait carries a tradeoff enforced in `Ecosystem._drain` and friends.
 
-Wired into the simulation right now: speed, size, metabolism, lifespan,
-efficiency, vision (sensing), fertility (reproduction). Still dormant:
-aggression (predation).
+All eight traits are live: speed and size set how a body moves and what
+it costs, vision sets sensing range, metabolism and efficiency set the
+burn, fertility sets breeding readiness, lifespan sets the age limit,
+and aggression splits the population between foragers and hunters.
 """
 
 import random
@@ -48,15 +117,30 @@ TRAIT_NAMES = (
 )
 
 
+# Where the aggression spectrum divides into readable roles. These are
+# labels for the UI only — behaviour is continuous.
+PREY_MAX = 0.35
+PREDATOR_MIN = 0.70
+
+
+def role_of(aggression: float) -> str:
+    """'prey' | 'mixed' | 'predator' — a display label for a trait value."""
+    if aggression >= PREDATOR_MIN:
+        return "predator"
+    if aggression >= PREY_MAX:
+        return "mixed"
+    return "prey"
+
+
 @dataclass(slots=True)
 class Genome:
     speed: float  # faster movement, higher movement upkeep
-    size: float  # bigger body, higher upkeep, bigger target
-    vision: float  # sensing range (food/predators) — dormant
+    size: float  # bigger body, higher upkeep, easier to spot
+    vision: float  # sensing range for food and neighbours
     metabolism: float  # base energy burn rate
-    fertility: float  # reproduction readiness — dormant
+    fertility: float  # how fast breeding readiness accumulates
     lifespan: float  # max age in seconds
-    aggression: float  # predator behavior — dormant
+    aggression: float  # hunt-vs-forage split (predator behaviour)
     efficiency: float  # lowers every energy cost
 
 
@@ -145,7 +229,34 @@ class Organism:
     last_hunt: float = 0.0  # sim time of the last prey scan
     danger: "Organism | None" = None  # nearest threat sensed (higher aggression)
     fleeing: bool = False  # sprinting away this tick (resets each tick)
+    hunting: bool = False  # chasing prey this tick (resets each tick)
     on_hunt: bool = False  # hunting this hunger span (aggression-weighted)
+    role_until: float = 0.0  # sim time the current role commitment expires
+    chase_started: float = 0.0  # sim time the current chase began
+    # --- descent ---------------------------------------------------------
+    # The family line: every organism carries the id of the founder it
+    # descends from, inherited from its first parent. Line members are the
+    # "kin" the plate highlights when you select one of them.
+    lineage: int = 0
+    parent_a: int | None = None  # first parent (the one lineage comes from)
+    parent_b: int | None = None  # second parent
+    born_at: float = 0.0  # sim time of birth (0 for the founding stock)
+
+
+@dataclass(slots=True)
+class Event:
+    """One thing that happened in the world, for the view layers to read.
+
+    The simulation stays headless: it emits what happened and where, and
+    the renderer / HUD decide whether anything should be drawn or logged.
+    """
+
+    t: float  # sim time
+    kind: str  # 'birth' | 'mate' | 'ate' | 'starved' | 'aged' | 'eaten'
+    x: float
+    y: float
+    actor: int  # organism the event is about
+    other: int = 0  # who caused it (predator on 'eaten', parent on 'birth')
 
 
 # ===== simulation/spatial.py =====
@@ -178,6 +289,47 @@ class SpatialGrid:
                 self.cells[key] = [it]
             else:
                 bucket.append(it)
+
+    def nearest(self, x: float, y: float, radius: float, accept=None):
+        """The closest item within `radius` of (x, y), or None.
+
+        Toroidal like `within`, but returns one item instead of a list —
+        which is what sensing wants, and it allocates nothing. `accept`
+        optionally filters candidates (e.g. "is this actually prey?").
+        """
+        c = self.cell
+        half_w, half_h = self.width / 2, self.height / 2
+        best = None
+        best_d2 = radius * radius
+        x0 = int((x - radius) // c)
+        x1 = int((x + radius) // c)
+        y0 = int((y - radius) // c)
+        y1 = int((y + radius) // c)
+
+        for cx in range(x0, x1 + 1):
+            for cy in range(y0, y1 + 1):
+                bucket = self.cells.get((cx % self.cols, cy % self.rows))
+                if not bucket:
+                    continue
+                for it in bucket:
+                    dx = it.x - x
+                    if dx > half_w:
+                        dx -= self.width
+                    elif dx < -half_w:
+                        dx += self.width
+                    if dx * dx > best_d2:
+                        continue  # early reject on x alone
+                    dy = it.y - y
+                    if dy > half_h:
+                        dy -= self.height
+                    elif dy < -half_h:
+                        dy += self.height
+                    d2 = dx * dx + dy * dy
+                    # Tightening `best_d2` as we go prunes later candidates.
+                    if d2 <= best_d2 and (accept is None or accept(it)):
+                        best_d2 = d2
+                        best = it
+        return best
 
     def within(self, x: float, y: float, radius: float) -> list:
         """Items within `radius` of (x, y), toroidal-aware."""
@@ -218,8 +370,23 @@ class SpatialGrid:
 
 import math
 import random
+from collections import deque
 from dataclasses import dataclass
+from typing import NamedTuple
 
+
+
+class Sample(NamedTuple):
+    """One per-second observation of the world, for the trends chart."""
+
+    t: float
+    speed: float  # mean speed trait
+    size: float  # mean size trait
+    population: int
+    aggression: float  # mean aggression trait
+    food: int
+    energy: float  # mean energy, as a fraction of max
+    predators: int  # organisms above the predator aggression threshold
 
 
 @dataclass
@@ -232,10 +399,10 @@ class WorldConfig:
     # --- energy ---------------------------------------------------------
     max_energy: float = 100.0
     # drain/s = (base + range*metabolism) * (1 + speed_cost*speed + size_cost*size)
-    #          * (1 - efficiency_saving*efficiency)
-    base_metabolism: float = 0.30  # energy/s at minimal traits
-    metabolism_range: float = 0.55  # extra burn from the metabolism trait
-    speed_cost: float = 0.6  # upkeep multiplier weight for speed trait
+    #          * (1 - efficiency_saving*efficiency) * (1 + predation_drain*aggression)
+    base_metabolism: float = 0.22  # energy/s at minimal traits
+    metabolism_range: float = 0.40  # extra burn from the metabolism trait
+    speed_cost: float = 0.9  # upkeep weight for the speed trait
     size_cost: float = 0.8  # upkeep multiplier weight for size trait
     efficiency_saving: float = 0.5  # fraction of upkeep efficiency can erase
 
@@ -244,12 +411,25 @@ class WorldConfig:
     lifespan_range: float = 480.0  # extra seconds at lifespan trait 1
 
     # --- food -------------------------------------------------------------
-    food_spawn_rate: float = 0.9  # food items per second — slower than the
-    #   population eats, so the plate visibly clears and refills (the "it
-    #   is being eaten" pulse) instead of sitting full all the time.
-    max_food: int = 90  # food cap (the world is finite) — keep it scarce
-    food_energy: float = 30.0  # energy per food item
-    initial_food_fraction: float = 0.45  # food present at t=0 (world starts alive)
+    # The plate is a flow, not a stock: the spawn rate sets how much
+    # energy the ecosystem receives per second, and the population settles
+    # where consumption meets supply.
+    #
+    # Food arrives in *patches* rather than scattered uniformly. Uniform
+    # food makes speed a runaway scramble trait — when every meal is a
+    # lone dot, the fastest creature wins every race and the population
+    # converges on maximum speed, which in turn makes prey uncatchable and
+    # predation impossible. Patches change that: a forager that finds a
+    # meadow eats many meals without travelling, so speed stops being the
+    # only thing that matters, and prey that gather at a patch are exactly
+    # where a hunter knows to look.
+    food_spawn_rate: float = 9.0  # food items per second (supply, not patches)
+    food_patch_size: int = 10  # items dropped per patch
+    food_patch_radius: float = 55.0  # px, spread of one patch
+    max_food: int = 320  # food cap (the world is finite)
+    food_energy: float = 12.0  # energy per food item — small meals, many of them
+    initial_food_fraction: float = 0.35  # food present at t=0 (world starts alive)
+
 
     # --- senses ------------------------------------------------------------
     vision_base: float = 30.0  # sensing range in px at vision trait 0
@@ -268,34 +448,62 @@ class WorldConfig:
     # Aggressive organisms breed slower — a direct reproductive edge for
     # prey that keeps the population majority herbivore even under raids.
     repro_aggression_penalty: float = 0.8
-    max_population: int = 300  # no births above this (safety valve)
+    max_population: int = 400  # no births above this (safety valve)
     mutation_rate: float = 0.05  # per-trait mutation probability (slider-driven)
     # --- immigration -----------------------------------------------------
     # Safety net: a stream of fresh random immigrants keeps the lab
     # population from emptying out entirely. Now that reproduction is
     # live it rarely fires, but it guards against total extinction.
-    min_population: int = 40
-    migration_rate: float = 1.0  # immigrants per second while below floor
+    min_population: int = 28
+    migration_rate: float = 0.15  # immigrants per second while below floor
 
-    # --- predation -----------------------------------------------------
+    # --- predation -------------------------------------------------------
     # Predation is continuous, driven by the aggression trait on a
     # 0..1 spectrum. Every hungry organism hunts weaker neighbours with
     # probability = aggression, and forages plant food with probability
-    # (1 - aggression). Aggression also adds an upkeep surcharge, so a
-    # truly carnivorous lifestyle has to pay for itself. Because the
-    # benefit scales smoothly with the trait, aggressive predators can
-    # evolve from a clean herbivore lineage step by step in mutations.
-    predation_drain: float = 2.5  # steep upkeep: hunting must pay for itself
-    prey_energy_gain: float = 22.0  # energy a predator gains per catch
+    # (1 - aggression). The cost sits on the *behaviour* rather than on
+    # the gene: a chase burns extra energy, so hunting has to pay for
+    # itself, but carrying an aggression gene is nearly free. That keeps
+    # the climb smooth — a mutant that hunts a little pays a little —
+    # instead of digging a fitness valley no intermediate can cross.
+    predation_drain: float = 0.3  # small upkeep surcharge (a hunter's body)
+    hunt_drain_cost: float = 1.2  # extra drain/s while actively chasing prey
+    prey_energy_gain: float = 45.0  # energy a predator gains per catch
+    # A hunter's gut is built for meat: the same plant is worth less to
+    # it. This is what keeps a grazer majority — mid-aggression creatures
+    # are mediocre at both trades, so selection pushes the population
+    # toward the two ends instead of everyone drifting to "hunter".
+    forage_penalty: float = 0.2  # plant energy lost at full aggression
     capture_bonus: float = 6.0  # px added to reach beyond both radii
-    hunt_interval: float = 0.15  # seconds between prey re-scans
+    # A hungry creature commits to hunting or foraging for a *span* of a
+    # few seconds, so roles read as behaviour instead of flickering every
+    # tick — and a hunter that finds nothing catchable goes back to plants
+    # instead of burning energy on a hopeless chase.
+    role_span: float = 2.5  # seconds committed to one role per decision
     # Aggression must exceed a sensed organism's by at least this margin
     # for it to count as prey (and to trigger fleeing) — so similar
     # neighbours ignore each other instead of flinching constantly.
     hunt_margin: float = 0.1
+    # How much faster a hunter must be than its quarry before the chase
+    # is worth starting. Small, because chases here are endurance
+    # chases: a hunted organism can only sprint while it still has the
+    # energy for it, and a predator that is even slightly faster runs it
+    # down once it tires. Speed decides who escapes *alert and fresh*.
+    catch_margin: float = 1.05
+    # Speed is not free to use, only to have: below this fraction of max
+    # energy an organism cannot sprint at all, which is the window a
+    # hunter's stamina hunt lives in.
+    sprint_energy_floor: float = 0.25
+    chase_timeout: float = 10.0  # seconds before a hunter abandons a chase
+    # A threat only counts as a threat if it could actually run you down:
+    # prey that out-run a predator simply don't flee it. Paired with the
+    # same speed test on the hunter's side, the arms race becomes a real
+    # one — speed is a refuge, not decoration.
+    # A predator must also be *close* before panic is worth its price.
+    danger_range_frac: float = 0.45  # flight zone, as a fraction of vision
     flee_strength: float = 2.6  # how hard a weak-minded organism turns away
-    flee_speed_boost: float = 1.5  # sprint multiplier while fleeing
-    flee_drain_cost: float = 1.2  # extra drain/s while sprinting
+    flee_speed_boost: float = 1.35  # sprint multiplier while fleeing
+    flee_drain_cost: float = 0.8  # extra drain/s while sprinting
     # Predators must stock far more energy to breed, so predator numbers
     # lag prey availability (predator-prey cycling) instead of flooding.
     predator_mate_gate_mult: float = 2.0
@@ -315,49 +523,81 @@ class Ecosystem:
         self.time = 0.0  # simulation time in seconds
         self.deaths: dict[str, int] = {"starvation": 0, "age": 0, "eaten": 0}
         self.births = 0  # lifetime count of births
-        # (t, avg_speed, avg_size, population, avg_aggression) / sim second
-        self.history: list[tuple[float, float, float, int, float]] = []
+        self.migrants = 0  # lifetime count of immigrants
+        # Per-second observations for the trends chart.
+        self.history: list[Sample] = []
         self._history_acc = 0.0
         self.grid = SpatialGrid(config.width, config.height)
+        # A second grid for food, so sensing scales with what is actually
+        # nearby instead of scanning every plant on the plate.
+        self.food_grid = SpatialGrid(config.width, config.height)
         self._next_id = 1
         self._migration_acc = 0.0
         self._food_acc = 0.0
         self._food_ids: set[int] = set()
         self.eaten = 0  # lifetime count of food items consumed
+        # Deepest genealogical generation reached so far (cheap to keep
+        # here — the HUD shows it every frame).
+        self.max_generation = 1
+        # What happened lately, for the view layers (plate pulses, event
+        # log). Drained by the UI with `take_events`; bounded so a long
+        # unattended run can't grow it.
+        self.events: deque[Event] = deque(maxlen=256)
         # Seed the world with a fully prey population (aggression pinned to
         # zero) so predators are not present at t=0: they emerge later as
         # aggressive mutations spread. That is the arc you actually watch.
         for _ in range(config.organisms):
-            self._spawn(initial_prey=True)
+            self._spawn(founder=True)
         # The world starts with food already on the plate, not empty.
-        for _ in range(int(config.max_food * config.initial_food_fraction)):
-            self._spawn_food()
+        while len(self.food) < config.max_food * config.initial_food_fraction:
+            self._spawn_patch()
+        self.food_grid.rebuild(self.food)
+
+    # --- events -----------------------------------------------------------
+
+    def _emit(self, kind: str, x: float, y: float, actor: int, other: int = 0) -> None:
+        self.events.append(Event(self.time, kind, x, y, actor, other))
+
+    def take_events(self) -> list[Event]:
+        """Drain everything that happened since the last call."""
+        if not self.events:
+            return []
+        out = list(self.events)
+        self.events.clear()
+        return out
 
     # --- population -----------------------------------------------------
 
-    def _spawn(self, initial_prey: bool = False) -> None:
-        c = self.config
-        if initial_prey:
-            # Pin aggression to zero so the founder stock is all prey.
-            # Predators then arise only as aggressive mutations spread.
-            genome = random_genome()
-            genome.aggression = 0.0
-        else:
-            genome = random_genome()
-        self.organisms.append(
-            Organism(
-                id=self._next_id,
-                x=random.random() * c.width,
-                y=random.random() * c.height,
-                heading=random.random() * 2 * math.pi,
-                genome=genome,
-                energy=random.uniform(0.4, 1.0) * c.max_energy,
-                age=0.0,
-            )
-        )
-        self._next_id += 1
+    def _spawn(self, founder: bool = False) -> None:
+        """Add one organism: the founding stock at t=0, or an immigrant.
 
-    def _kill(self, o: Organism, cause: str) -> None:
+        Both arrive as foragers — aggression is pinned to zero — so
+        predators only ever arise by mutation, and a dying world is
+        reseeded with prey instead of being handed hunters by fiat.
+        """
+        c = self.config
+        genome = random_genome()
+        genome.aggression = 0.0
+        o = Organism(
+            id=self._next_id,
+            x=random.random() * c.width,
+            y=random.random() * c.height,
+            heading=random.random() * 2 * math.pi,
+            genome=genome,
+            energy=random.uniform(0.4, 1.0) * c.max_energy,
+            age=0.0,
+            born_at=self.time,
+        )
+        # An immigrant founds its own family line; the founding stock
+        # likewise starts one line each.
+        o.lineage = o.id
+        self._next_id += 1
+        self.organisms.append(o)
+        if not founder:
+            self.migrants += 1
+            self._emit("arrived", o.x, o.y, o.id)
+
+    def _kill(self, o: Organism, cause: str, by: int = 0) -> None:
         """Flag an organism as dead; swept out at the end of the tick.
 
         Marking (rather than list.remove) keeps the per-organism update
@@ -367,35 +607,56 @@ class Ecosystem:
         if not o.dead:
             o.dead = True
             self.deaths[cause] = self.deaths.get(cause, 0) + 1
+            kind = {"starvation": "starved", "age": "aged"}.get(cause, cause)
+            self._emit(kind, o.x, o.y, o.id, by)
 
     # --- food -------------------------------------------------------------
 
-    def _spawn_food(self) -> None:
+    def _spawn_food(self, x: float | None = None, y: float | None = None) -> None:
         c = self.config
         f = Food(
             id=self._next_id,  # shares the id space with organisms — ids are unique
-            x=random.random() * c.width,
-            y=random.random() * c.height,
+            x=random.random() * c.width if x is None else x,
+            y=random.random() * c.height if y is None else y,
             energy=c.food_energy,
         )
         self._next_id += 1
         self.food.append(f)
         self._food_ids.add(f.id)
 
-    def _eat_food(self, f: Food) -> None:
+    def _spawn_patch(self) -> None:
+        """Drop one clump of food — a meadow, not a speck."""
+        c = self.config
+        cx = random.random() * c.width
+        cy = random.random() * c.height
+        r = c.food_patch_radius
+        for _ in range(c.food_patch_size):
+            if len(self.food) >= c.max_food:
+                return
+            # Uniform inside the disc: sqrt keeps it from bunching at the
+            # centre, so a patch reads as a patch and not a single blob.
+            dist = math.sqrt(random.random()) * r
+            angle = random.random() * 2 * math.pi
+            self._spawn_food(
+                (cx + math.cos(angle) * dist) % c.width,
+                (cy + math.sin(angle) * dist) % c.height,
+            )
+
+    def _eat_food(self, f: Food, o: Organism) -> None:
         self.food.remove(f)
         self._food_ids.discard(f.id)
         self.eaten += 1
+        self._emit("ate", f.x, f.y, o.id)
 
     def _update_food(self, dt: float) -> None:
         c = self.config
         if len(self.food) >= c.max_food:
             self._food_acc = 0.0
             return
-        self._food_acc += dt * c.food_spawn_rate
+        self._food_acc += dt * c.food_spawn_rate / c.food_patch_size
         while self._food_acc >= 1.0 and len(self.food) < c.max_food:
             self._food_acc -= 1.0
-            self._spawn_food()
+            self._spawn_patch()
 
     # --- sensing -----------------------------------------------------------
 
@@ -406,33 +667,16 @@ class Ecosystem:
     def _sense_food(self, o: Organism) -> None:
         """Point `o.target` at the nearest food within vision, or None.
 
-        Toroidal: distances are computed across the wrapped world.
+        The food grid is rebuilt once per tick, so an item eaten earlier
+        this frame can still be in a bucket; the `_food_ids` filter skips
+        those so the scan can't lock onto a meal that is already gone.
         """
-        c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
+        o.target = self.food_grid.nearest(
+            o.x, o.y, self._vision_range(o), accept=self._is_live_food
+        )
 
-        best = None
-        best_d2 = r2
-        for f in self.food:
-            dx = f.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue  # early reject on x alone
-            dy = f.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = f
-        o.target = best
+    def _is_live_food(self, f: Food) -> bool:
+        return f.id in self._food_ids
 
     def _hunts(self, o: Organism, p: Organism) -> bool:
         """Whether `o` would treat `p` as prey: p must be meaningfully
@@ -444,67 +688,44 @@ class Ecosystem:
         )
 
     def _scan_prey(self, o: Organism) -> None:
-        """Point `o.prey_target` at the nearest weaker neighbour in vision."""
-        c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
-        best = None
-        best_d2 = r2
-        for p in self.organisms:
-            if not self._hunts(o, p):
-                continue
-            dx = p.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue
-            dy = p.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = p
-        o.prey_target = best
+        """Point `o.prey_target` at the nearest weaker neighbour in vision
+        that this hunter could actually run down.
+
+        `_outruns` is deliberately a *cruising* speed test: a quarry that
+        is faster than the hunter can never be caught, but one of similar
+        speed can be run to exhaustion. Chases are endurance chases.
+        """
+        o.prey_target = self.grid.nearest(
+            o.x,
+            o.y,
+            self._vision_range(o),
+            accept=lambda p: self._hunts(o, p) and self._outruns(o, p),
+        )
 
     def _scan_danger(self, o: Organism) -> None:
-        """Point `o.danger` at the nearest meaningfully-stronger neighbour
-        (a threat) in vision, or None."""
+        """Point `o.danger` at the nearest real threat in the flight zone.
+
+        A neighbour is only a threat if it is meaningfully more aggressive
+        *and* fast enough to run this organism down — a slower neighbour
+        can never land a catch, so fleeing it would burn sprint energy for
+        nothing. Panic is expensive; the world selects against creatures
+        that panic at nothing.
+        """
         c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
-        best = None
-        best_d2 = r2
-        for p in self.organisms:
-            if (
-                p.dead
-                or p is o
-                or p.genome.aggression - o.genome.aggression < c.hunt_margin
-            ):
-                continue
-            dx = p.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue
-            dy = p.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = p
-        o.danger = best
+        zone = self._vision_range(o) * c.danger_range_frac
+        o.danger = self.grid.nearest(
+            o.x,
+            o.y,
+            zone,
+            accept=lambda p: self._threatens(p, o) and self._outruns(p, o),
+        )
+
+    def _threatens(self, p: Organism, o: Organism) -> bool:
+        return (
+            not p.dead
+            and p is not o
+            and p.genome.aggression - o.genome.aggression >= self.config.hunt_margin
+        )
 
     def _flee(self, o: Organism, danger: Organism, dt: float) -> None:
         """Turn the heading away from `danger` (toroidal bearing).
@@ -554,26 +775,45 @@ class Ecosystem:
             o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
             return
 
-        # Choose a role once per hunger span, gated by the aggression trait.
-        # `on_hunt` persists until the quarry dies or is caught. Do NOT
-        # bump last_sense here — that throttle belongs to the food scan
-        # alone, otherwise a would-be forager never re-senses food.
-        if o.prey_target is None or o.prey_target.dead or self.time - o.last_hunt >= c.hunt_interval:
+        # Commit to a role for a span of seconds (not per tick), gated by
+        # the aggression trait. The commitment is what makes "hunter" and
+        # "forager" read as behaviour on the plate instead of flickering.
+        if self.time >= o.role_until:
             o.on_hunt = random.random() < o.genome.aggression
+            o.role_until = self.time + c.role_span
 
         if o.on_hunt:
             if o.prey_target is None or o.prey_target.dead:
                 self._scan_prey(o)
-            if o.prey_target is not None and not o.prey_target.dead:
-                # Reuse the steer; `_steer_toward` reads o.target, so point
-                # it at the quarry for the turn then restore.
-                saved = o.target
-                o.target = o.prey_target  # type: ignore[assignment]
-                self._steer_toward(o, dt)
-                o.target = saved
-            else:
-                o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
-            return
+                o.last_hunt = self.time
+                o.chase_started = self.time
+            elif self.time - o.last_hunt >= c.sense_interval:
+                # Look around for something better; the clock only resets
+                # when the quarry actually changes, so a hunter that keeps
+                # missing the same prey eventually gives up on it.
+                held = o.prey_target
+                self._scan_prey(o)
+                o.last_hunt = self.time
+                if o.prey_target is not held:
+                    o.chase_started = self.time
+            if o.prey_target is not None:
+                if self.time - o.chase_started >= c.chase_timeout:
+                    # This chase is going nowhere: it is faster than us, or
+                    # we cannot turn tight enough. Stop paying for it.
+                    o.prey_target = None
+                else:
+                    # Reuse the steer; `_steer_toward` reads o.target, so
+                    # point it at the quarry for the turn, then restore.
+                    saved = o.target
+                    o.target = o.prey_target  # type: ignore[assignment]
+                    self._steer_toward(o, dt)
+                    o.target = saved
+                    o.hunting = True
+                    return
+            # No quarry (or the chase was dropped): forage for the rest of
+            # this span instead of burning energy on empty pursuit.
+            o.on_hunt = False
+            o.role_until = self.time + c.role_span
 
         # Foraging for plant food.
         if self.time - o.last_sense >= c.sense_interval:
@@ -585,15 +825,23 @@ class Ecosystem:
         else:
             o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
 
+    def _can_sprint(self, o: Organism) -> bool:
+        """Sprinting costs energy, so it needs some in the tank."""
+        return o.energy > self.config.max_energy * self.config.sprint_energy_floor
+
+    def _outruns(self, o: Organism, p: Organism) -> bool:
+        """Whether `o` is fast enough to run `p` down (given a fresh `p`)."""
+        return move_speed_px(o.genome) >= move_speed_px(p.genome) * self.config.catch_margin
+
     def _try_catch(self, o: Organism) -> None:
         """Catch the hunted prey: kill it and gain energy.
 
-        Catching is a hard speed gate: a predator only catches prey that
-        it can actually outrun while the prey sprints away. A faster prey
-        is uncatchable and gets away, so the arms race is real — prey
-        evolve speed to escape, predators evolve speed to chase — and a
-        lone carnivore cannot clear the whole plate, because the faster
-        prey simply outlive it.
+        The catch is a speed contest against the quarry's *current* best:
+        a fresh prey that is already sprinting away is uncatchable for a
+        hunter of similar speed — but the sprint burns energy, so a
+        slower or exhausted prey gets run down. That is what makes this an
+        arms race instead of a wall: prey evolve speed to escape the first
+        seconds, predators evolve speed to keep the chase alive.
         """
         c = self.config
         prey = o.prey_target
@@ -613,12 +861,14 @@ class Ecosystem:
         if dx * dx + dy * dy > reach * reach:
             return
 
-        pred_speed = move_speed_px(o.genome)
-        prey_sprint = move_speed_px(prey.genome) * c.flee_speed_boost
-        if pred_speed < prey_sprint:
-            return  # outrun: the prey escapes
+        prey_speed = move_speed_px(prey.genome)
+        if prey.fleeing and self._can_sprint(prey):
+            prey_speed *= c.flee_speed_boost
+        if move_speed_px(o.genome) < prey_speed * c.catch_margin:
+            return  # outrun: the prey gets away
+
         o.energy = min(c.max_energy, o.energy + c.prey_energy_gain)
-        self._kill(prey, "eaten")
+        self._kill(prey, "eaten", by=o.id)
         o.prey_target = None
 
     def _try_eat(self, o: Organism) -> None:
@@ -639,8 +889,9 @@ class Ecosystem:
             dy += c.height
         reach = body_radius_px(o.genome.size) + 3
         if dx * dx + dy * dy <= reach * reach:
-            o.energy = min(c.max_energy, o.energy + f.energy)
-            self._eat_food(f)
+            gain = f.energy * (1.0 - c.forage_penalty * o.genome.aggression)
+            o.energy = min(c.max_energy, o.energy + gain)
+            self._eat_food(f, o)
             o.target = None
 
     # --- behaviour ------------------------------------------------------
@@ -649,6 +900,9 @@ class Ecosystem:
         """Advance the simulation by `dt` seconds."""
         self.time += dt
         c = self.config
+        # Sense against the food as it stood at the start of the tick; the
+        # grid is a snapshot, and food eaten below is filtered on lookup.
+        self.food_grid.rebuild(self.food)
 
         for o in list(self.organisms):
             if o.dead:
@@ -666,7 +920,7 @@ class Ecosystem:
             self._turn(o, dt)
 
             speed = move_speed_px(o.genome)
-            if o.fleeing:
+            if o.fleeing and self._can_sprint(o):
                 speed *= c.flee_speed_boost
             o.x += math.cos(o.heading) * speed * dt
             o.y += math.sin(o.heading) * speed * dt
@@ -677,8 +931,11 @@ class Ecosystem:
             drain = self._drain(o.genome)
             if o.fleeing:
                 drain += c.flee_drain_cost
+            if o.hunting:
+                drain += c.hunt_drain_cost
             o.energy = max(0.0, o.energy - drain * dt)
             o.fleeing = False  # reset for the next tick
+            o.hunting = False
             if o.energy <= 0.0:
                 self._kill(o, "starvation")
                 continue
@@ -705,16 +962,25 @@ class Ecosystem:
         self._history_acc += dt
         if self._history_acc >= 1.0:
             self._history_acc -= 1.0
+            pop = self.organisms
+            n = len(pop)
+            predators = 0
+            for o in pop:
+                if o.genome.aggression >= PREDATOR_MIN:
+                    predators += 1
             self.history.append(
-                (
-                    self.time,
-                    self.trait_average("speed"),
-                    self.trait_average("size"),
-                    len(self.organisms),
-                    self.trait_average("aggression"),
+                Sample(
+                    t=self.time,
+                    speed=self.trait_average("speed"),
+                    size=self.trait_average("size"),
+                    population=n,
+                    aggression=self.trait_average("aggression"),
+                    food=len(self.food),
+                    energy=(sum(o.energy for o in pop) / n / c.max_energy) if n else 0.0,
+                    predators=predators,
                 )
             )
-            if len(self.history) > 300:
+            if len(self.history) > 600:
                 del self.history[0]
 
     def _steer_toward(self, o: Organism, dt: float) -> None:
@@ -789,11 +1055,21 @@ class Ecosystem:
                 energy=c.baby_energy,
                 age=0.0,
                 generation=max(o.generation, partner.generation) + 1,
+                # The line comes from the first parent; both parent links
+                # are kept so a single creature's own descendants can be
+                # traced later.
+                lineage=o.lineage,
+                parent_a=o.id,
+                parent_b=partner.id,
+                born_at=self.time,
             )
             self._next_id += 1
             self._wrap(baby)
             self.organisms.append(baby)
             self.births += 1
+            self._emit("birth", baby.x, baby.y, baby.id, o.id)
+            if baby.generation > self.max_generation:
+                self.max_generation = baby.generation
 
     def _find_partner(self, o: Organism) -> Organism | None:
         """First ready, energetic neighbor within the mating radius."""
@@ -831,6 +1107,51 @@ class Ecosystem:
         if not pop:
             return 0.0
         return sum(getattr(o.genome, trait) for o in pop) / len(pop)
+
+    def role_counts(self) -> tuple[int, int, int]:
+        """(prey, mixed, predators) — a single pass over the population."""
+        prey = mixed = pred = 0
+        for o in self.organisms:
+            a = o.genome.aggression
+            if a >= PREDATOR_MIN:
+                pred += 1
+            elif a >= PREY_MAX:
+                mixed += 1
+            else:
+                prey += 1
+        return prey, mixed, pred
+
+    def mean_energy(self) -> float:
+        """Mean energy as a fraction of the maximum, or 0 if empty."""
+        pop = self.organisms
+        if not pop:
+            return 0.0
+        return sum(o.energy for o in pop) / len(pop) / self.config.max_energy
+
+    def lineage_members(self, lineage: int) -> set[int]:
+        """Every living organism descended from the founder of a line."""
+        return {o.id for o in self.organisms if o.lineage == lineage}
+
+    def descendants_of(self, oid: int) -> set[int]:
+        """Every living organism descended from `oid` (any depth).
+
+        Walks the parent links of the living population, so it works for
+        an ancestor that has already died — the line outlives the body.
+        """
+        children: dict[int, list[int]] = {}
+        for o in self.organisms:
+            if o.parent_a is not None:
+                children.setdefault(o.parent_a, []).append(o.id)
+            if o.parent_b is not None:
+                children.setdefault(o.parent_b, []).append(o.id)
+        found: set[int] = set()
+        stack = [oid]
+        while stack:
+            for cid in children.get(stack.pop(), ()):
+                if cid not in found:
+                    found.add(cid)
+                    stack.append(cid)
+        return found
 
     def organism_at(self, x: float, y: float, tolerance: float = 0.0) -> Organism | None:
         """The nearest organism whose body (radius + tolerance) contains the
@@ -871,29 +1192,128 @@ class Ecosystem:
             o.y -= c.height
 
 
-# ===== ui/widgets.py =====
-"""Tiny hand-drawn UI widgets (pygame draws its own control elements).
+# ===== rendering/orbs.py =====
+"""Organism paint: the colour and orb sprites shared by the plate and the UI.
 
-These are the building blocks for every panel later: controls sidebar,
-organism inspector, experiment picker. Each widget owns its rect, knows
-how to draw itself, and returns True from `handle` when it was activated.
+Kept separate from the renderer because the inspector draws the selected
+creature as the same orb the plate uses — one definition of "what a
+creature looks like", so a green dot in the panel is the same green as
+the dot you clicked.
+"""
+
+import pygame
+
+
+RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
+ENERGY_LEVELS = 8  # brightness buckets for the atlas
+AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
+GLOW = 2  # px of soft halo around each orb
+
+# Colours at zero energy (dim) for each species.
+_STARVED_PREY = (30, 90, 62)
+_STARVED_PRED = (94, 38, 38)
+
+
+def lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    return tuple(round(av + (bv - av) * t) for av, bv in zip(a, b))
+
+
+def _orb_color(species: str, level: int) -> tuple[int, int, int]:
+    """Body colour for an atlas cell: brightness rises with the energy level."""
+    t = level / (ENERGY_LEVELS - 1) if ENERGY_LEVELS > 1 else 1.0
+    if species == "pred":
+        return lerp(_STARVED_PRED, PREDATOR, t)
+    return lerp(_STARVED_PREY, ACCENT, t)
+
+
+def orb_color(aggression: float, level: int) -> tuple[int, int, int]:
+    """Body colour across the aggression spectrum: herbivore green at low
+    aggression, shifting through amber to carnivore red at high aggression.
+    The energy level still controls brightness (dim = starving).
+    """
+    t = min(1.0, max(0.0, aggression))
+    green = _orb_color("prey", level)
+    red = _orb_color("pred", level)
+    warm = lerp(green, red, 0.45)  # amber midpoint
+    if t < 0.5:
+        return lerp(green, warm, t * 2.0)
+    return lerp(warm, red, (t - 0.5) * 2.0)
+
+
+def energy_level(energy: float, max_energy: float) -> int:
+    """Quantise an energy value into an atlas brightness bucket."""
+    return min(
+        ENERGY_LEVELS - 1,
+        max(0, int(energy / max_energy * ENERGY_LEVELS)),
+    )
+
+
+def aggression_bucket(aggression: float) -> int:
+    return min(AGGRESSION_BUCKETS - 1, max(0, int(aggression * AGGRESSION_BUCKETS)))
+
+
+def make_orb(color: tuple[int, int, int], radius: int, glow: int = GLOW) -> pygame.Surface:
+    """A soft-edged radial orb: full-colour body fading into the halo."""
+    side = (radius + glow) * 2 + 2
+    surf = pygame.Surface((side, side), pygame.SRCALPHA)
+    c = side // 2
+    # Halo: a thin fading ring outside the body.
+    for rr in range(radius + glow, radius, -1):
+        a = int(255 * (radius + glow - rr + 1) / (glow + 1))
+        pygame.draw.circle(surf, (*color, a), (c, c), rr)
+    # Body in full colour.
+    pygame.draw.circle(surf, (*color, 255), (c, c), radius)
+    # Brighter inner core for depth.
+    core = lerp(color, (255, 255, 255), 0.35)
+    pygame.draw.circle(surf, (*core, 220), (c, c), max(1, int(radius * 0.7)))
+    inner = lerp(color, (255, 255, 255), 0.65)
+    pygame.draw.circle(surf, (*inner, 160), (c, c), max(1, int(radius * 0.4)))
+    return surf
+
+
+# ===== ui/widgets.py =====
+"""Hand-drawn UI widgets.
+
+pygame ships no controls, so every element here is drawn from primitives.
+Each widget owns its rect, draws itself from palette values, and returns
+True from `handle` when it was activated. Widgets are stateless apart
+from hover/press flags — the app keeps the real state — so a panel can be
+redrawn at any time from the current world.
+
+`draw` takes the current mouse position so hover states are available
+without widgets reaching for global state themselves.
 """
 
 import pygame
 
 
 
+def draw_panel(surface: pygame.Surface, rect: pygame.Rect, radius: int = 8) -> None:
+    """The standard chrome surface: a raised panel with a hairline border."""
+    pygame.draw.rect(surface, PANEL, rect, border_radius=radius)
+    pygame.draw.rect(surface, PANEL_BORDER, rect, width=1, border_radius=radius)
+
+
+def draw_tile(surface: pygame.Surface, rect: pygame.Rect, hover: bool = False,
+              color: tuple[int, int, int] = RAISED) -> None:
+    pygame.draw.rect(surface, RAISED_HOVER if hover else color, rect, border_radius=6)
+
+
 class Label:
+    """A single line of text, re-rendered only when it changes."""
+
     def __init__(
         self,
         pos: tuple[int, int],
         text: str,
         font: pygame.font.Font,
-        color: tuple[int, int, int] = TEXT_DIM,
+        color: tuple[int, int, int] = TEXT,
+        anchor: str = "midleft",
     ) -> None:
-        self.pos = pos  # midleft anchor
+        self.pos = pos
         self.font = font
         self.color = color
+        self.anchor = anchor  # any pygame.Rect anchor name
         self.text = text
         self.surface = font.render(text, True, color)
 
@@ -903,19 +1323,25 @@ class Label:
             self.surface = self.font.render(text, True, self.color)
 
     def draw(self, surface: pygame.Surface) -> None:
-        surface.blit(self.surface, self.surface.get_rect(midleft=self.pos))
+        surface.blit(self.surface, self.surface.get_rect(**{self.anchor: self.pos}))
 
 
 class Button:
+    """A clickable label. `active` inverts it (used for Pause / Replay)."""
+
     def __init__(
         self,
         rect: pygame.Rect | tuple[int, int, int, int],
         label: str,
         font: pygame.font.Font,
+        active: bool = False,
+        accent: tuple[int, int, int] = ACCENT,
     ) -> None:
         self.rect = pygame.Rect(rect)
         self.label = label
         self.font = font
+        self.active = active
+        self.accent = accent
         self._pressed = False
 
     def handle(self, event: pygame.event.Event) -> bool:
@@ -928,15 +1354,21 @@ class Button:
             return clicked
         return False
 
-    def draw(self, surface: pygame.Surface) -> None:
-        pygame.draw.rect(surface, PANEL, self.rect, border_radius=6)
-        pygame.draw.rect(surface, ACCENT, self.rect, width=1, border_radius=6)
-        text = self.font.render(self.label, True, TEXT)
+    def draw(self, surface: pygame.Surface, mouse: tuple[int, int] = (0, 0)) -> None:
+        hovered = self.rect.collidepoint(mouse)
+        fill = self.accent if self.active else (
+            RAISED_HOVER if hovered else RAISED
+        )
+        border = self.accent if (self.active or hovered) else PANEL_BORDER
+        text_color = BG if self.active else TEXT
+        pygame.draw.rect(surface, fill, self.rect, border_radius=6)
+        pygame.draw.rect(surface, border, self.rect, width=1, border_radius=6)
+        text = self.font.render(self.label, True, text_color)
         surface.blit(text, text.get_rect(center=self.rect.center))
 
 
 class Slider:
-    """Horizontal slider; value snapped to `step` increments."""
+    """Horizontal slider with a filled track; value snapped to `step`."""
 
     def __init__(
         self,
@@ -946,12 +1378,14 @@ class Slider:
         max_value: float,
         value: float,
         step: float = 0.25,
+        accent: tuple[int, int, int] = ACCENT,
     ) -> None:
         self.rect = pygame.Rect(rect)
         self.font = font
         self.min = min_value
         self.max = max_value
         self.step = step
+        self.accent = accent
         self._value = value
         self._drag = False
 
@@ -966,14 +1400,17 @@ class Slider:
 
     @property
     def dragging(self) -> bool:
-        """True while the user is holding the knob (used to pause timed
-        auto-advance while scrubbing)."""
+        """True while the user holds the knob (pauses timed auto-advance)."""
         return self._drag
 
+    @property
+    def track(self) -> pygame.Rect:
+        """The clickable band, taller than the drawn line so it is easy to hit."""
+        return self.rect.inflate(0, 12)
+
     def _set_from_x(self, x: int) -> None:
-        t = max(0.0, min(1.0, (x - self.rect.left) / self.rect.width))
-        raw = self.min + t * (self.max - self.min)
-        self._value = round(raw / self.step) * self.step
+        t = max(0.0, min(1.0, (x - self.rect.left) / max(1, self.rect.width)))
+        self._value = round((self.min + t * (self.max - self.min)) / self.step) * self.step
 
     def _knob_x(self) -> int:
         t = (self._value - self.min) / (self.max - self.min)
@@ -981,7 +1418,7 @@ class Slider:
 
     def handle(self, event: pygame.event.Event) -> None:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            self._drag = self.rect.collidepoint(event.pos)
+            self._drag = self.track.collidepoint(event.pos)
             if self._drag:
                 self._set_from_x(event.pos[0])
         elif event.type == pygame.MOUSEMOTION and self._drag:
@@ -989,31 +1426,813 @@ class Slider:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self._drag = False
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, mouse: tuple[int, int] = (0, 0)) -> None:
         y = self.rect.centery
-        pygame.draw.line(surface, PANEL_BORDER, (self.rect.left, y), (self.rect.right, y), 3)
+        hovered = self.track.collidepoint(mouse) or self._drag
+        pygame.draw.line(surface, METER_BG, (self.rect.left, y), (self.rect.right, y), 4)
         knob = self._knob_x()
         if knob > self.rect.left:
-            pygame.draw.line(surface, ACCENT, (self.rect.left, y), (knob, y), 3)
-        pygame.draw.circle(surface, ACCENT, (knob, y), 6)
+            pygame.draw.line(surface, self.accent, (self.rect.left, y), (knob, y), 4)
+        if hovered:
+            pygame.draw.circle(surface, ACCENT_DIM, (knob, y), 9)
+        pygame.draw.circle(surface, self.accent, (knob, y), 6)
         pygame.draw.circle(surface, BG, (knob, y), 2)
 
 
+class Meter:
+    """A labelled progress bar: `label  ▓▓▓░░░  62/100`."""
+
+    def __init__(self, font: pygame.font.Font, label_w: int = 34, value_w: int = 62) -> None:
+        self.font = font
+        self.label_w = label_w
+        self.value_w = value_w
+
+    def draw(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        label: str,
+        fraction: float,
+        text: str,
+        color: tuple[int, int, int] = ACCENT,
+    ) -> None:
+        surface.blit(self.font.render(label, True, TEXT_DIM), (rect.left, rect.top))
+        bar = pygame.Rect(
+            rect.left + self.label_w, rect.top + 1,
+            max(8, rect.width - self.label_w - self.value_w), 8,
+        )
+        pygame.draw.rect(surface, METER_BG, bar, border_radius=4)
+        frac = max(0.0, min(1.0, fraction))
+        if frac > 0.0:
+            filled = pygame.Rect(bar.left, bar.top, max(2, round(bar.width * frac)), bar.height)
+            pygame.draw.rect(surface, color, filled, border_radius=4)
+        surface.blit(
+            self.font.render(text, True, TEXT),
+            (bar.right + 6, rect.top),
+        )
+
+
+def stat_tile(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    value: str,
+    caption: str,
+    fonts,
+    color: tuple[int, int, int] = TEXT,
+) -> None:
+    """A number with a caption under it — the census readout unit."""
+    draw_tile(surface, rect)
+    big = fonts.metric.render(value, True, color)
+    surface.blit(big, big.get_rect(midtop=(rect.centerx, rect.top + 4)))
+    cap = fonts.small.render(caption, True, TEXT_FAINT)
+    surface.blit(cap, cap.get_rect(midbottom=(rect.centerx, rect.bottom - 4)))
+
+
+def keycap(surface: pygame.Surface, pos: tuple[int, int], key: str, fonts,
+           text: str) -> int:
+    """Draw `[key] hint` with the key in a little box; return the width used."""
+    rendered = fonts.keycap.render(key, True, TEXT_DIM)
+    box = pygame.Rect(pos[0], pos[1] - 7, rendered.get_width() + 8, 14)
+    pygame.draw.rect(surface, RAISED, box, border_radius=3)
+    pygame.draw.rect(surface, PANEL_BORDER, box, width=1, border_radius=3)
+    surface.blit(rendered, rendered.get_rect(center=box.center))
+    hint = fonts.small.render(text, True, TEXT_FAINT)
+    surface.blit(hint, hint.get_rect(midleft=(box.right + 5, pos[1])))
+    return box.width + 5 + hint.get_width()
+
+
+# ===== ui/charts.py =====
+"""The trends chart: the ecosystem's vital signs over the run.
+
+Three quantities share one plot because they are read together — the
+population trace against the food supply (who is eating whom out of
+house and home) and against mean aggression (the arms race). Each series
+is normalised to its own range, so the point is shape rather than
+absolute units, and the legend carries the current value of each line.
+"""
+
+import pygame
+
+
+PAD = 6
+GRID_LINES = 3
+WINDOW = 300  # seconds of history shown (the sim keeps 600)
+
+# Semi-transparent surface reused for the fill under the population line;
+# allocating one per frame would churn a full plot-sized buffer at 60 Hz.
+_shade: pygame.Surface | None = None
+
+
+def _shade_for(size: tuple[int, int]) -> pygame.Surface:
+    global _shade
+    if _shade is None or _shade.get_size() != size:
+        _shade = pygame.Surface(size, pygame.SRCALPHA)
+    _shade.fill((0, 0, 0, 0))
+    return _shade
+
+
+def draw_trends(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    hist: list[Sample],
+    fonts,
+    config,
+) -> None:
+    """Plot population, food and aggression inside `rect`, legend included."""
+    legend_h = fonts.small.get_height() + 2
+    plot = pygame.Rect(rect.left, rect.top, rect.width, rect.height - legend_h)
+    pygame.draw.rect(surface, BG, plot, border_radius=4)
+
+    if len(hist) < 2:
+        hint = fonts.small.render("collecting data…", True, TEXT_FAINT)
+        surface.blit(hint, hint.get_rect(center=plot.center))
+    else:
+        window = hist[-WINDOW:]
+        n = len(window)
+
+        # Horizontal grid: with every series normalised, the grid is what
+        # shows the size of the swing.
+        for i in range(1, GRID_LINES + 1):
+            y = plot.top + round(plot.height * i / (GRID_LINES + 1))
+            pygame.draw.line(surface, PANEL_BORDER, (plot.left, y), (plot.right, y), 1)
+
+        def plot_line(values: list[float], scale: float,
+                      color: tuple[int, int, int], fill: bool = False) -> None:
+            if scale <= 0:
+                return
+            pts = [
+                (
+                    plot.left + round(i * (plot.width - 1) / max(1, n - 1)),
+                    plot.bottom - 1 - round(min(1.0, values[i] / scale) * (plot.height - 2)),
+                )
+                for i in range(n)
+            ]
+            if fill:
+                shade = _shade_for(plot.size)
+                poly = [(p[0] - plot.left, p[1] - plot.top) for p in pts]
+                poly += [(poly[-1][0], plot.height), (poly[0][0], plot.height)]
+                pygame.draw.polygon(shade, (*color, 34), poly)
+                surface.blit(shade, plot.topleft)
+            pygame.draw.lines(surface, color, False, pts, 1)
+
+        plot_line([s.population for s in window],
+                  float(config.max_population) * 0.65, ACCENT, fill=True)
+        plot_line([s.food for s in window], float(config.max_food) * 0.65, FOOD)
+        plot_line([s.aggression for s in window], 1.0, PREDATOR)
+
+    # Legend: swatch, name, and the live value of each series.
+    y = rect.bottom - legend_h // 2
+    x = rect.left + 2
+    latest = hist[-1] if hist else None
+    for label, value, color in (
+        ("pop", str(latest.population) if latest else "-", ACCENT),
+        ("food", str(latest.food) if latest else "-", FOOD),
+        ("agg", f"{latest.aggression * 100:.0f}%" if latest else "-", PREDATOR),
+    ):
+        pygame.draw.circle(surface, color, (x + 3, y - 1), 3)
+        text = fonts.small.render(f"{label} {value}", True, TEXT_DIM)
+        surface.blit(text, text.get_rect(midleft=(x + 10, y)))
+        x += 10 + text.get_width() + 12
+
+
+# ===== ui/inspector.py =====
+"""The specimen panel: everything known about the selected organism.
+
+Drawn with pygame primitives like the rest of the UI. The panel is the
+place where evolution becomes legible one creature at a time: the trait
+bars show this genome, a tick on each bar shows where the population
+average sits, and the footer counts the family line it belongs to.
+
+    size   ↔ body radius        energy ↔ brightness
+    speed  ↔ heading tick       aggression ↔ colour (green → red)
+"""
+
+from typing import NamedTuple
+
+import pygame
+
+
+# Short display names for the genome traits.
+TRAIT_LABELS = {
+    "speed": "spd",
+    "size": "size",
+    "vision": "vis",
+    "metabolism": "meta",
+    "fertility": "fert",
+    "lifespan": "life",
+    "aggression": "agg",
+    "efficiency": "eff",
+}
+
+CHIP = 34  # px, the specimen portrait's bounding box
+BAR_W = 54
+BAR_H = 5
+
+
+class Descent(NamedTuple):
+    """How the selected creature sits in the family tree."""
+
+    line: int  # living members of its family line, founder included
+    descendants: int  # living organisms descended from it
+    population: int  # for the share calculation
+
+
+class Inspector:
+    def __init__(self, fonts) -> None:
+        self.fonts = fonts
+        self.meter = Meter(fonts.small, label_w=30, value_w=66)
+        self._chip: pygame.Surface | None = None
+        self._chip_key: tuple | None = None
+
+    # --- public API -------------------------------------------------------
+
+    def draw(self, surface: pygame.Surface, rect: pygame.Rect, o: Organism | None,
+             config, averages: dict[str, float], descent: Descent | None) -> None:
+        draw_panel(surface, rect)
+        fonts = self.fonts
+        x = rect.left + PANEL_PAD
+        y = rect.top + PANEL_PAD
+        surface.blit(fonts.title.render("SELECTED", True, TEXT_DIM), (x, y))
+        y += fonts.title.get_height() + 6
+
+        if o is None:
+            self._draw_empty(surface, rect, y)
+            return
+
+        y = self._draw_identity(surface, x, y, o, config)
+        y = self._draw_meters(surface, rect, y, o, config)
+        self._draw_traits(surface, rect, y, o, averages)
+        self._draw_descent(surface, rect, o, descent)
+
+    # --- sections ---------------------------------------------------------
+
+    def _draw_empty(self, surface: pygame.Surface, rect: pygame.Rect, y: int) -> None:
+        fonts = self.fonts
+        lines = (
+            ("click a creature", TEXT_DIM),
+            ("its genome, energy and", TEXT_FAINT),
+            ("family line land here.", TEXT_FAINT),
+        )
+        for text, color in lines:
+            rendered = fonts.small.render(text, True, color)
+            surface.blit(rendered, (rect.left + PANEL_PAD, y))
+            y += fonts.small.get_height() + 1
+
+    def _draw_identity(self, surface: pygame.Surface, x: int, y: int,
+                       o: Organism, config) -> int:
+        """Portrait chip plus id / generation / role, and the family line."""
+        chip = pygame.Rect(x, y, CHIP, CHIP)
+        pygame.draw.rect(surface, BG, chip, border_radius=6)
+        pygame.draw.rect(surface, PANEL_BORDER, chip, width=1, border_radius=6)
+        orb = self._portrait(o, config)
+        surface.blit(orb, orb.get_rect(center=chip.center))
+
+        fonts = self.fonts
+        tx = chip.right + 10
+        role = role_of(o.genome.aggression)
+        role_color = {
+            "predator": PREDATOR,
+            "mixed": FOOD,
+            "prey": ACCENT,
+        }[role]
+        surface.blit(fonts.body.render(f"#{o.id}   gen {o.generation}", True, TEXT),
+                     (tx, y + 2))
+        pygame.draw.circle(surface, role_color, (tx + 4, y + fonts.body.get_height() + 9), 3)
+        tag = fonts.small.render(f"{role}   line #{o.lineage}", True, role_color)
+        surface.blit(tag, (tx + 12, y + fonts.body.get_height() + 2))
+        return y + CHIP + 8
+
+    def _portrait(self, o: Organism, config) -> pygame.Surface:
+        """The creature drawn as the plate draws it, cached by appearance."""
+        radius = max(3, round(body_radius_px(o.genome.size)))
+        level = energy_level(o.energy, config.max_energy)
+        agg = aggression_bucket(o.genome.aggression)
+        key = (agg, radius, level)
+        if key != self._chip_key:
+            self._chip = make_orb(orb_color(agg / 7.0, level), radius, glow=3)
+            self._chip_key = key
+        return self._chip
+
+    def _draw_meters(self, surface: pygame.Surface, rect: pygame.Rect, y: int,
+                     o: Organism, config) -> int:
+        fonts = self.fonts
+        row = fonts.small.get_height() + 4
+        left = rect.left + PANEL_PAD
+        width = rect.width - 2 * PANEL_PAD
+        life = config.base_lifespan + o.genome.lifespan * config.lifespan_range
+
+        self.meter.draw(surface, pygame.Rect(left, y, width, row), "energy",
+                        o.energy / config.max_energy,
+                        f"{o.energy:3.0f}/{config.max_energy:.0f}")
+        y += row
+        age_frac = o.age / life if life > 0 else 0.0
+        # Age is a countdown, so tint it as it runs out.
+        age_color = ACCENT if age_frac < 0.75 else FOOD
+        self.meter.draw(surface, pygame.Rect(left, y, width, row), "age",
+                        age_frac, f"{o.age:3.0f}/{life:3.0f}s", age_color)
+        y += row
+        self.meter.draw(surface, pygame.Rect(left, y, width, row), "ready",
+                        o.readiness, "yes" if o.readiness >= 1.0 else f"{o.readiness * 100:2.0f}%",
+                        PREDATOR if o.readiness >= 1.0 else ACCENT_DIM)
+        return y + row + 4
+
+    def _draw_traits(self, surface: pygame.Surface, rect: pygame.Rect, y: int,
+                     o: Organism, averages: dict[str, float]) -> None:
+        """The genome, two columns of bars, each with the population's
+        average marked — so "is this one fast for its time?" is visible."""
+        fonts = self.fonts
+        row = fonts.tiny.get_height() + 6
+        col_w = (rect.width - 2 * PANEL_PAD) // 2
+        names = list(TRAIT_NAMES)
+        for i, name in enumerate(names):
+            col, line = divmod(i, 4)
+            left = rect.left + PANEL_PAD + col * col_w
+            top = y + line * row
+            self._trait(surface, left, top, name, getattr(o.genome, name), averages.get(name, 0.0))
+
+    def _trait(self, surface: pygame.Surface, x: int, y: int, name: str,
+               value: float, average: float) -> None:
+        fonts = self.fonts
+        surface.blit(fonts.tiny.render(TRAIT_LABELS[name], True, TEXT_FAINT), (x, y))
+        bar = pygame.Rect(x + 30, y + 2, BAR_W, BAR_H)
+        pygame.draw.rect(surface, METER_BG, bar, border_radius=2)
+        fill = round(BAR_W * max(0.0, min(1.0, value)))
+        if fill:
+            pygame.draw.rect(surface, ACCENT,
+                             pygame.Rect(bar.left, bar.top, fill, BAR_H), border_radius=2)
+        # Population average: a tick above the bar.
+        tick = bar.left + round(BAR_W * max(0.0, min(1.0, average)))
+        pygame.draw.line(surface, TEXT_DIM, (tick, bar.top - 3), (tick, bar.bottom + 1), 1)
+        surface.blit(fonts.tiny.render(f"{value * 100:3.0f}", True, TEXT),
+                     (bar.right + 4, y))
+
+    def _draw_descent(self, surface: pygame.Surface, rect: pygame.Rect,
+                      o: Organism, descent: Descent | None) -> None:
+        if descent is None:
+            return
+        fonts = self.fonts
+        y = rect.bottom - PANEL_PAD - fonts.small.get_height() * 2 - 2
+        share = descent.line / descent.population * 100 if descent.population else 0.0
+        line = fonts.small.render(
+            f"line #{o.lineage}: {descent.line} alive ({share:.0f}% of plate)",
+            True, TEXT_DIM,
+        )
+        kids = fonts.small.render(
+            f"descendants of #{o.id}: {descent.descendants}", True, TEXT_DIM,
+        )
+        surface.blit(line, (rect.left + PANEL_PAD, y))
+        surface.blit(kids, (rect.left + PANEL_PAD, y + fonts.small.get_height() + 2))
+
+
+# ===== ui/hud.py =====
+"""The heads-up display: everything on screen that is not the plate.
+
+The HUD owns the layout, the chrome, and the input routing. It knows
+nothing about how the world is stepped or recorded — the app hands it the
+current world and a little state (paused, replay position, selection) and
+it paints; when a control is used it fires a callback back to the app.
+
+    ┌ header ────────────── EVOLAB ── speed / mutation / pause / replay ┐
+    │ key bar ── colour legend ─────────────── clock ── fps            │
+    │ ┌── plate ────────────────────────┐ ┌ census ── trends ───┐      │
+    │ │                                │ │ recent ── selected ─┐      │
+    └─┴────────────────────────────────┴─┴─────────────────────┴──────┘
+"""
+
+from collections import deque
+from typing import Callable, NamedTuple
+
+import pygame
+
+
+HEIGHT = 860  # window height the layout is designed for
+WIDTH = 1280
+
+TILE_ROWS = 2
+TILE_COLS = 3
+
+
+class Replay(NamedTuple):
+    """Where the time machine's playhead is."""
+
+    index: int
+    total: int
+
+
+class Hud:
+    def __init__(self, size: tuple[int, int], fonts,
+                 on_toggle_pause: Callable[[], None],
+                 on_toggle_replay: Callable[[], None],
+                 on_seek: Callable[[int], None]) -> None:
+        self.fonts = fonts
+        self.size = size
+        self._on_toggle_pause = on_toggle_pause
+        self._on_toggle_replay = on_toggle_replay
+        self._on_seek = on_seek
+        self._build_layout(size)
+
+        # --- header controls ------------------------------------------
+        f = fonts
+        self.pause_btn = Button((0, 0, 78, 30), "Pause", f.button)
+        self.replay_btn = Button((0, 0, 78, 30), "Replay", f.button, accent=GOLD)
+        self.speed_slider = Slider((0, 0, 150, 16), f.small, 0.25, 20.0, 1.0)
+        self.mut_slider = Slider((0, 0, 110, 16), f.small, 0.001, 0.20, 0.05,
+                                 step=0.001, accent=FOOD)
+        # Time-machine scrub bar (only drawn while replaying).
+        self.scrub = Slider((0, 0, 400, 14), f.small, 0, 239, 0, step=1, accent=GOLD)
+
+        self.clock = Label((0, 0), "T+ 0:00", f.small, TEXT_DIM, anchor="midright")
+        self.fps = Label((0, 0), "60 fps", f.small, TEXT_FAINT, anchor="midright")
+        self.state = Label((0, 0), "", f.title, GOLD, anchor="midleft")
+        self.replay_pos = Label((0, 0), "", f.small, TEXT, anchor="midright")
+        self._place_header_controls()
+        self._place_readouts()
+
+        # --- event log --------------------------------------------------
+        # Lines are (text, colour). Deaths are summarised once per simulated
+        # second (a crash would otherwise flood the panel), while a kill is
+        # pushed straight away with both ids: those are the moments worth
+        # reading, and everything else is bookkeeping.
+        self.log: deque[tuple[str, tuple[int, int, int]]] = deque(maxlen=40)
+        self._pending: dict[str, int] = {}
+        self._log_second = -1
+        self._last_generation = 1
+
+        # Cached per-second views of the population (trait averages and the
+        # selected creature's family), so the panel costs O(n) per second
+        # rather than O(n) per frame.
+        self._stat_second = -1
+        self._averages: dict[str, float] = {}
+        self._descent: Descent | None = None
+
+        self.meter = Meter(f.small, label_w=44, value_w=0)
+
+    # --- layout -----------------------------------------------------------
+
+    def _build_layout(self, size: tuple[int, int]) -> None:
+        w, h = size
+        m = MARGIN
+        self.header = pygame.Rect(m, m, w - 2 * m, HEADER_H)
+        side_x = w - m - SIDEBAR_W
+        self.sidebar = pygame.Rect(side_x, self.header.bottom + 8,
+                                   SIDEBAR_W, h - self.header.bottom - 8 - m)
+        plate_w = side_x - 2 * m
+        self.keybar = pygame.Rect(m, self.header.bottom + 8, plate_w, KEYBAR_H)
+        self.plate = pygame.Rect(m, self.keybar.bottom + 4, plate_w,
+                                 h - self.keybar.bottom - 4 - m)
+
+        # Sidebar panels, top to bottom, sized from font metrics.
+        f = self.fonts
+        pad = PANEL_PAD
+        tile_h = f.metric.get_height() + f.small.get_height() + 6
+        census_h = (2 * pad + f.title.get_height() + 6
+                    + TILE_ROWS * tile_h + (TILE_ROWS - 1) * 6
+                    + 8 + f.small.get_height() + 12)
+        trends_h = 2 * pad + f.title.get_height() + 6 + 100 + f.small.get_height() + 2
+        log_h = 2 * pad + f.title.get_height() + 6 + 6 * (f.small.get_height() + 2)
+
+        y = self.sidebar.top
+        self.census_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, census_h)
+        y = self.census_panel.bottom + GAP
+        self.trends_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, trends_h)
+        y = self.trends_panel.bottom + GAP
+        self.log_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, log_h)
+        y = self.log_panel.bottom + GAP
+        self.inspector_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width,
+                                           self.sidebar.bottom - y)
+        self.inspector = Inspector(self.fonts)
+
+    def _place_header_controls(self) -> None:
+        """Right-align the toolbar groups inside the header."""
+        f = self.fonts
+        cy = self.header.centery
+        slider_y = cy - 6
+        value_gap, group_gap = 8, 18
+        value_w = 46
+
+        speed_w = self.speed_slider.rect.width + value_gap + value_w
+        mut_w = self.mut_slider.rect.width + value_gap + value_w
+        total = speed_w + group_gap + mut_w + group_gap + 78 + 8 + 78
+        x = self.header.right - 16 - total
+
+        self.speed_label = Label((x, cy - 14), "SPEED", f.tiny, TEXT_FAINT)
+        self.speed_slider.rect.topleft = (x, slider_y)
+        self.speed_value = Label((x + self.speed_slider.rect.width + value_gap, cy),
+                                 "1.0x", f.small, TEXT)
+        x += speed_w + group_gap
+
+        self.mut_label = Label((x, cy - 14), "MUTATION", f.tiny, TEXT_FAINT)
+        self.mut_slider.rect.topleft = (x, slider_y)
+        self.mut_value = Label((x + self.mut_slider.rect.width + value_gap, cy),
+                               "5.0%", f.small, TEXT)
+        x += mut_w + group_gap
+
+        self.pause_btn.rect.topleft = (x, cy - 15)
+        self.replay_btn.rect.topleft = (self.pause_btn.rect.right + 8, cy - 15)
+
+    def _place_readouts(self) -> None:
+        """Positions for the key-bar readouts, the state chip and the scrub bar."""
+        self.clock.pos = (self.keybar.right - 8 - 74, self.keybar.centery)
+        self.fps.pos = (self.keybar.right - 8, self.keybar.centery)
+        self.state.pos = (self.plate.left + 12, self.plate.top + 14)
+
+        # The scrub bar sits over the foot of the plate; its geometry is
+        # fixed by the layout, not by whether replay is currently on.
+        bar = pygame.Rect(self.plate.left, self.plate.bottom - 46, self.plate.width, 40)
+        pos_w = 78
+        self.scrub.rect = pygame.Rect(bar.left + 92, bar.centery - 7,
+                                      bar.width - 92 - pos_w - 16, 14)
+
+    # --- properties -------------------------------------------------------
+
+    @property
+    def speed(self) -> float:
+        return self.speed_slider.value
+
+    @property
+    def mutation(self) -> float:
+        return self.mut_slider.value
+
+    def set_replay_span(self, total: int) -> None:
+        self.scrub.max = max(1, total - 1)
+        self.scrub.value = 0
+
+    def widgets(self) -> tuple:
+        return (self.pause_btn, self.replay_btn, self.speed_slider, self.mut_slider,
+                self.scrub)
+
+    def chrome_at(self, pos: tuple[int, int], replaying: bool) -> bool:
+        """True if a point is over chrome, so plate clicks don't leak into it."""
+        if self.header.collidepoint(pos) or self.keybar.collidepoint(pos):
+            return True
+        if self.sidebar.collidepoint(pos):
+            return True
+        if replaying and self.scrub.track.collidepoint(pos):
+            return True
+        return any(w.rect.collidepoint(pos) for w in self.widgets())
+
+    # --- input ------------------------------------------------------------
+
+    def handle(self, event: pygame.event.Event, replaying: bool) -> None:
+        if self.pause_btn.handle(event):
+            self._on_toggle_pause()
+        if self.replay_btn.handle(event):
+            self._on_toggle_replay()
+        self.speed_slider.handle(event)
+        self.mut_slider.handle(event)
+        if replaying:
+            self.scrub.handle(event)
+            if self.scrub.dragging:
+                self._on_seek(int(self.scrub.value))
+
+    # --- event log --------------------------------------------------------
+
+    def consume(self, events: list[Event], world_time: float,
+                max_generation: int) -> None:
+        for e in events:
+            if e.kind == "eaten":
+                self.log.append((f"#{e.actor} eaten by #{e.other}", PREDATOR))
+            elif e.kind in ("starved", "aged", "arrived"):
+                self._pending[e.kind] = self._pending.get(e.kind, 0) + 1
+
+        second = int(world_time)
+        if second != self._log_second:
+            self._log_second = second
+            parts = [f"{n} {kind}" for kind, n in self._pending.items() if n]
+            self._pending.clear()
+            if parts:
+                stamp = f"{second // 60}:{second % 60:02d}"
+                self.log.append((f"{stamp}  " + " · ".join(parts), TEXT_FAINT))
+        if max_generation > self._last_generation:
+            self._last_generation = max_generation
+            self.log.append((f"generation {max_generation} reached", ACCENT))
+
+    # --- per-second population views --------------------------------------
+
+    def _refresh(self, world: Ecosystem, selected: Organism | None) -> None:
+        """Trait averages and the selection's family — once per sim second."""
+        second = int(world.time)
+        if second == self._stat_second:
+            return
+        self._stat_second = second
+        self._averages = {name: world.trait_average(name) for name in TRAIT_NAMES}
+        if selected is None:
+            self._descent = None
+            return
+        self._descent = Descent(
+            line=len(world.lineage_members(selected.lineage)),
+            descendants=len(world.descendants_of(selected.id)),
+            population=len(world.organisms),
+        )
+
+    # --- drawing ----------------------------------------------------------
+
+    def draw(self, screen: pygame.Surface, world: Ecosystem, selected: Organism | None,
+             kin: frozenset[int], paused: bool, replay: Replay | None,
+             fps: float, mouse: tuple[int, int]) -> None:
+        self._refresh(world, selected)
+        self._draw_header(screen, paused, replay is not None, mouse)
+        self._draw_keybar(screen, world, paused, replay, fps)
+        self._draw_census(screen, world)
+        self._draw_trends(screen, world)
+        self._draw_log(screen)
+        self.inspector.draw(screen, self.inspector_panel, selected, world.config,
+                            self._averages, self._descent)
+        if replay is not None:
+            self._draw_scrub(screen, replay, mouse)
+        else:
+            self._draw_hints(screen)
+
+    def _draw_header(self, screen: pygame.Surface, paused: bool,
+                     replaying: bool, mouse: tuple[int, int]) -> None:
+        draw_panel(screen, self.header)
+        f = self.fonts
+        x = self.header.left + 16
+        logo = f.logo.render("EVOLAB", True, ACCENT)
+        screen.blit(logo, (x, self.header.top + 8))
+        tag = f.tagline.render("artificial life, running live", True, TEXT_FAINT)
+        screen.blit(tag, (x, self.header.top + 8 + logo.get_height() + 1))
+
+        self.pause_btn.label = "Resume" if paused else "Pause"
+        self.pause_btn.active = paused
+        self.pause_btn.draw(screen, mouse)
+        self.replay_btn.label = "Live" if replaying else "Replay"
+        self.replay_btn.active = replaying
+        self.replay_btn.draw(screen, mouse)
+
+        self.speed_label.draw(screen)
+        self.speed_slider.draw(screen, mouse)
+        self.speed_value.set_text(f"{self.speed_slider.value:.2f}x")
+        self.speed_value.draw(screen)
+        self.mut_label.draw(screen)
+        self.mut_slider.draw(screen, mouse)
+        self.mut_value.set_text(f"{self.mut_slider.value * 100:.1f}%")
+        self.mut_value.draw(screen)
+
+    def _draw_keybar(self, screen: pygame.Surface, world: Ecosystem, paused: bool,
+                     replay: Replay | None, fps: float) -> None:
+        draw_panel(screen, self.keybar, radius=6)
+        f = self.fonts
+        x = self.keybar.left + 10
+        y = self.keybar.centery
+        items = (
+            (ACCENT, "prey — forages plants", False),
+            (PREDATOR, "predator — hunts prey", False),
+            (FOOD, "food", False),
+            (TEXT, "ready to mate", True),
+            (ACCENT_DIM, "family line", True),
+        )
+        for color, text, hollow in items:
+            pygame.draw.circle(screen, color, (x + 3, y), 4 if hollow else 3,
+                               1 if hollow else 0)
+            label = f.small.render(text, True, TEXT_FAINT)
+            screen.blit(label, label.get_rect(midleft=(x + 10, y)))
+            x += 10 + label.get_width() + 14
+
+        self.fps.set_text(f"{fps:.0f} fps")
+        self.fps.draw(screen)
+        seconds = int(world.time)
+        self.clock.set_text(f"T+ {seconds // 60}:{seconds % 60:02d}")
+        self.clock.draw(screen)
+
+        self.state.set_text(
+            "REPLAYING" if replay is not None else ("PAUSED" if paused else "")
+        )
+        if self.state.text:
+            self.state.draw(screen)
+
+    def _draw_census(self, screen: pygame.Surface, world: Ecosystem) -> None:
+        draw_panel(screen, self.census_panel)
+        f = self.fonts
+        pad = PANEL_PAD
+        x0 = self.census_panel.left + pad
+        y = self.census_panel.top + pad
+        screen.blit(f.title.render("ECOSYSTEM", True, TEXT_DIM), (x0, y))
+        y += f.title.get_height() + 6
+
+        deaths = world.deaths
+        tiles = (
+            (str(len(world.organisms)), "population", ACCENT),
+            (str(len(world.food)), "food", FOOD),
+            (str(world.max_generation), "generation", TEXT),
+            (str(world.births), "births", TEXT),
+            (str(deaths["starvation"]), "starved", TEXT_FAINT),
+            (str(deaths["eaten"]), "eaten", PREDATOR),
+        )
+        tile_h = f.metric.get_height() + f.small.get_height() + 6
+        gap = 6
+        tile_w = (self.census_panel.width - 2 * pad - (TILE_COLS - 1) * gap) // TILE_COLS
+        for i, (value, caption, color) in enumerate(tiles):
+            row, col = divmod(i, TILE_COLS)
+            rect = pygame.Rect(x0 + col * (tile_w + gap), y + row * (tile_h + gap),
+                               tile_w, tile_h)
+            stat_tile(screen, rect, value, caption, f, color)
+        y += TILE_ROWS * tile_h + (TILE_ROWS - 1) * gap + 10
+
+        # Diet split: how the plate divides between grazers and hunters.
+        prey, mixed, pred = world.role_counts()
+        total = max(1, prey + mixed + pred)
+        bar = pygame.Rect(x0, y + f.small.get_height() + 2,
+                          self.census_panel.width - 2 * pad, 8)
+        pygame.draw.rect(screen, METER_BG, bar, border_radius=4)
+        x = bar.left
+        for count, color in ((prey, ACCENT), (mixed, FOOD), (pred, PREDATOR)):
+            width = round(bar.width * count / total)
+            if width:
+                pygame.draw.rect(screen, color, (x, bar.top, width, bar.height))
+            x += width
+        screen.blit(
+            f.small.render(
+                f"{prey} prey · {mixed} mixed · {pred} predators", True, TEXT_DIM),
+            (x0, y),
+        )
+
+    def _draw_trends(self, screen: pygame.Surface, world: Ecosystem) -> None:
+        draw_panel(screen, self.trends_panel)
+        f = self.fonts
+        pad = PANEL_PAD
+        x0 = self.trends_panel.left + pad
+        y = self.trends_panel.top + pad
+        screen.blit(f.title.render("TRENDS  ·  last 5 min", True, TEXT_DIM), (x0, y))
+        y += f.title.get_height() + 6
+        draw_trends(
+            screen,
+            pygame.Rect(x0, y, self.trends_panel.width - 2 * pad,
+                        self.trends_panel.bottom - pad - y),
+            world.history, f, world.config,
+        )
+
+    def _draw_log(self, screen: pygame.Surface) -> None:
+        draw_panel(screen, self.log_panel)
+        f = self.fonts
+        pad = PANEL_PAD
+        x0 = self.log_panel.left + pad
+        y = self.log_panel.top + pad
+        screen.blit(f.title.render("RECENT", True, TEXT_DIM), (x0, y))
+        y += f.title.get_height() + 6
+        line_h = f.small.get_height() + 2
+        room = max(0, (self.log_panel.bottom - pad - y) // line_h)
+        for text, color in list(self.log)[-room:][::-1]:
+            screen.blit(f.small.render(text, True, color), (x0, y))
+            y += line_h
+
+    def _draw_scrub(self, screen: pygame.Surface, replay: Replay,
+                    mouse: tuple[int, int]) -> None:
+        """The time-machine bar, laid over the foot of the plate."""
+        bar = pygame.Rect(self.plate.left, self.plate.bottom - 46, self.plate.width, 40)
+        pygame.draw.rect(screen, PANEL, bar, border_radius=6)
+        pygame.draw.rect(screen, GOLD, bar, width=1, border_radius=6)
+
+        f = self.fonts
+        pygame.draw.circle(screen, GOLD, (bar.left + 18, bar.centery), 4)
+        tag = f.title.render("REPLAY", True, GOLD)
+        screen.blit(tag, tag.get_rect(midleft=(bar.left + 28, bar.centery)))
+
+        self.scrub.draw(screen, mouse)
+        self.replay_pos.pos = (bar.right - 12, bar.centery)
+        self.replay_pos.set_text(f"{replay.index + 1} / {replay.total}")
+        self.replay_pos.draw(screen)
+
+    def _draw_hints(self, screen: pygame.Surface) -> None:
+        """A quiet strip of controls in the plate's corner."""
+        f = self.fonts
+        hints = (("SPACE", "pause"), ("R", "replay"), ("click", "inspect a creature"))
+        width = sum(
+            f.keycap.size(key)[0] + 8 + 5 + f.small.size(text)[0] + 16
+            for key, text in hints
+        )
+        panel = pygame.Rect(self.plate.left + 8,
+                            self.plate.bottom - 8 - f.small.get_height() - 14,
+                            width + 4, f.small.get_height() + 14)
+        pygame.draw.rect(screen, PANEL, panel, border_radius=6)
+        pygame.draw.rect(screen, PANEL_BORDER, panel, width=1, border_radius=6)
+        x = panel.left + 8
+        for key, text in hints:
+            x += keycap(screen, (x, panel.centery), key, f, text) + 16
+
+
 # ===== rendering/renderer.py =====
-"""Draws the ecosystem onto a pygame surface.
+"""Draws the ecosystem onto the plate surface.
 
-The renderer is a dumb view: it reads simulation state and paints it.
-The static background (fill + grid) is pre-rendered once and blitted
-every frame, so the per-frame cost is one blit plus the organisms.
+The renderer is a dumb view: it reads simulation state and paints it. It
+owns a surface the size of the world (the plate), and the app blits that
+surface into the layout — so the simulation never learns where it is on
+screen.
 
-Organisms are drawn from a pre-rendered "orb atlas": antialiased radial
-sprites baked at init for every (species, radius, energy-brightness)
-combination, so the per-frame cost is a single blit per organism with
-smooth soft-edged cells. Traits are still visible on the plate:
+The static background (fill + vignette + grid) is pre-rendered once and
+blitted every frame, and organisms are drawn from a pre-rendered "orb
+atlas" baked at init for every (aggression, radius, energy-brightness)
+combination, so the per-frame cost is one blit each. Traits stay visible:
     size       -> body radius
     energy     -> body brightness (dim = starving)
     speed      -> heading tick length
-    aggression -> species colour (prey = green, predator = red)
+    aggression -> colour, green through amber to red
+
+Two other channels are pure render and never touch the simulation:
+movement trails (a fading tail per organism, tinted by aggression) and
+event pulses (an expanding ring where something happened — a meal, a
+kill, an arrival). The world reports *that* things happened; the plate
+decides how to show it.
 """
 
 import math
@@ -1023,94 +2242,44 @@ import pygame
 
 GRID_SPACING = 64
 MAX_TICK = 14  # px at max speed
-RADIUS_STEPS = list(range(2, 9))  # rounded body radii (2..8 px)
-ENERGY_LEVELS = 8  # brightness buckets for the atlas
-AGGRESSION_BUCKETS = 8  # colour buckets for the aggression spectrum
-GLOW = 2  # px of soft halo around each orb
 TRAIL_LEN = 10  # how many recent positions make up a movement tail
 
-# Colors at zero energy (dim) for each species.
-_STARVED_PREY = (30, 90, 62)
-_STARVED_PRED = (94, 38, 38)
-
-
-def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
-    return tuple(round(av + (bv - av) * t) for av, bv in zip(a, b))
-
-
-def _orb_color(species: str, level: int) -> tuple[int, int, int]:
-    """Body color for an atlas cell: brightness rises with the energy level."""
-    t = level / (ENERGY_LEVELS - 1) if ENERGY_LEVELS > 1 else 1.0
-    if species == "pred":
-        return _lerp(_STARVED_PRED, PREDATOR, t)
-    return _lerp(_STARVED_PREY, ACCENT, t)
-
-
-def _aggression_color(aggression: float, level: int) -> tuple[int, int, int]:
-    """Body color across the aggression spectrum: herbivore green at low
-    aggression, shifting through amber to carnivore red at high aggression.
-    The energy level still controls brightness (dim = starving).
-    """
-    t = min(1.0, max(0.0, aggression))
-    green = _orb_color("prey", level)
-    red = _orb_color("pred", level)
-    warm = _lerp(green, red, 0.45)  # amber midpoint
-    if t < 0.5:
-        return _lerp(green, warm, t * 2.0)
-    return _lerp(warm, red, (t - 0.5) * 2.0)
-
-
-def _make_orb(color: tuple[int, int, int], radius: int, glow: int = GLOW) -> pygame.Surface:
-    """A soft-edged radial orb: full-colour body fading into the halo."""
-    side = (radius + glow) * 2 + 2
-    surf = pygame.Surface((side, side), pygame.SRCALPHA)
-    c = side // 2
-    # Halo: a thin fading ring outside the body.
-    for rr in range(radius + glow, radius, -1):
-        a = int(255 * (radius + glow - rr + 1) / (glow + 1))
-        pygame.draw.circle(surf, (*color, a), (c, c), rr)
-    # Body in full colour.
-    pygame.draw.circle(surf, (*color, 255), (c, c), radius)
-    # Brighter inner core for depth.
-    core = _lerp(color, (255, 255, 255), 0.35)
-    pygame.draw.circle(surf, (*core, 220), (c, c), max(1, int(radius * 0.7)))
-    inner = _lerp(color, (255, 255, 255), 0.65)
-    pygame.draw.circle(surf, (*inner, 160), (c, c), max(1, int(radius * 0.4)))
-    return surf
+# Pulse looks, keyed by the kind of event that caused them:
+#   (ring colour, life in seconds, px the ring grows to)
+PULSES = {
+    "ate": (FOOD_HI, 0.35, 26.0),
+    "eaten": (PREDATOR, 0.55, 40.0),
+    "arrived": (TEXT, 0.6, 34.0),
+}
 
 
 class Renderer:
-    def __init__(self, surface: pygame.Surface) -> None:
-        self.surface = surface
-        self.font = pygame.font.SysFont("dejavusansmono,consolas,monospace", 10)
-        w, h = surface.get_size()
+    def __init__(self, size: tuple[int, int]) -> None:
+        self.surface = pygame.Surface(size)
+        self.font = load_font(MONO, 10)
+        w, h = size
         self.background = self._build_background(w, h)
         self.atlas: dict[tuple[int, int, int], pygame.Surface] = {
-            (agg, radius, lvl): _make_orb(
-                _aggression_color(agg / (AGGRESSION_BUCKETS - 1), lvl), radius
-            )
+            (agg, radius, lvl): make_orb(orb_color(agg / (AGGRESSION_BUCKETS - 1), lvl), radius)
             for agg in range(AGGRESSION_BUCKETS)
             for radius in RADIUS_STEPS
             for lvl in range(ENERGY_LEVELS)
         }
-        self.food_sprite = _make_orb(FOOD, 3, glow=1)
-        # Movement trails (a render-side channel, keyed by organism id):
-        # each live organism leaves a short fading tail so the plate reads
-        # as alive and hunting is legible. Not part of the simulation.
+        self.food_sprite = make_orb(FOOD, 3, glow=1)
+        # Movement trails (keyed by organism id), so the plate reads as
+        # alive and a hunt is a visible streak before the dots touch.
         self.trails: dict[int, list[tuple[float, float]]] = {}
-        # Eat flashes: brief expanding pulses where food was consumed, so
-        # eating reads as an event instead of a silent disappearance. Each
-        # entry is (x, y, age_remaining). Detected by diffing the food set.
-        self.flashes: list[tuple[float, float, float]] = []
-        self._prev_food: set[tuple[int, int]] = set()
-        self._flash_tick = 1.0 / 60.0  # one render *is* one frame of life
+        # Pulses: (x, y, seconds_left, life, colour, growth in px).
+        self.pulses: list[tuple[float, float, float, float, tuple[int, int, int], float]] = []
+
+    # --- background -------------------------------------------------------
 
     def _build_background(self, w: int, h: int) -> pygame.Surface:
         bg = pygame.Surface((w, h))
         bg.fill(BG)
 
-        # A soft radial vignette: a darker frame fading in toward a clear centre,
-        # giving the plate depth so blank space doesn't read as "empty".
+        # A soft radial vignette: a darker frame fading in toward a clear
+        # centre, so blank space reads as depth instead of dead black.
         side = 128
         glow = pygame.Surface((side, side), pygame.SRCALPHA)
         cc = side // 2
@@ -1120,8 +2289,7 @@ class Renderer:
         for rr in range(cc, 0, -4):
             a = int(210 * (rr / cc))
             pygame.draw.circle(glow, (0, 0, 0, a), (cc, cc), rr)
-        glow = pygame.transform.smoothscale(glow, (w, h))
-        bg.blit(glow, (0, 0))
+        bg.blit(pygame.transform.smoothscale(glow, (w, h)), (0, 0))
 
         grid = pygame.Surface((w, h), pygame.SRCALPHA)
         for x in range(0, w + 1, GRID_SPACING):
@@ -1131,12 +2299,43 @@ class Renderer:
         bg.blit(grid, (0, 0))
         return bg
 
+    # --- events -----------------------------------------------------------
+
+    def consume(self, events: list[Event]) -> None:
+        """Turn this frame's events into pulses on the plate."""
+        for e in events:
+            look = PULSES.get(e.kind)
+            if look is not None:
+                color, life, grow = look
+                self.pulses.append((e.x, e.y, life, life, color, grow))
+
+    def _age_pulses(self, dt: float) -> None:
+        if not self.pulses:
+            return
+        kept = []
+        for x, y, left, life, color, grow in self.pulses:
+            left -= dt
+            if left > 0.0:
+                kept.append((x, y, left, life, color, grow))
+        self.pulses = kept
+
+    def _draw_pulses(self) -> None:
+        """Each pulse is an expanding, fading ring — a meal, a kill, an arrival."""
+        for x, y, left, life, color, grow in self.pulses:
+            t = left / life  # 1 -> 0 over the pulse's life
+            radius = round((1.0 - t) * grow) + 3
+            pygame.draw.circle(
+                self.surface, (*color, int(190 * t)), (int(x), int(y)),
+                radius, max(1, int(1 + t * 2)),
+            )
+
+    # --- trails -----------------------------------------------------------
+
     def _update_trails(self, world: Ecosystem) -> None:
-        """Append each living organism's current position to its trail and
-        drop trails for organisms that died. Trail points are kept short.
-        A toroidal wrap (a point suddenly on the far side of the plate)
-        would draw a streak across the whole screen, so wrapping resets
-        the tail instead of connecting the two distant points."""
+        """Append each living organism's position to its trail and forget
+        the dead. A toroidal wrap (a point suddenly on the far side of the
+        plate) would draw a streak across the whole screen, so wrapping
+        resets the tail instead of connecting the two distant points."""
         half_w = world.config.width / 2
         half_h = world.config.height / 2
         seen = set()
@@ -1157,55 +2356,38 @@ class Renderer:
 
     def _draw_trails(self, world: Ecosystem) -> None:
         """A fading tail per organism, tinted by its aggression, so motion
-        and hunting are readable even against the dark plate."""
+        and hunting are readable even against the dark plate.
+
+        Drawn as two polylines per creature — a dim tail with a brighter
+        leading edge — rather than one blended line per segment: at a few
+        hundred creatures the per-segment version spends more time in the
+        drawing layer than the rest of the frame put together.
+        """
         by_id = {o.id: o for o in world.organisms}
         for oid, pts in self.trails.items():
             o = by_id.get(oid)
             if o is None or len(pts) < 2:
                 continue
-            color = _lerp(HEADING, HEADING_PRED, o.genome.aggression)
-            n = len(pts)
-            for i in range(n - 1):
-                # Older segments blend toward the background: a real fade.
-                seg = _lerp(color, BG, 1.0 - (i / n))
-                pygame.draw.line(self.surface, seg,
-                                 (int(pts[i][0]), int(pts[i][1])),
-                                 (int(pts[i + 1][0]), int(pts[i + 1][1])), 1)
+            color = lerp(HEADING, HEADING_PRED, o.genome.aggression)
+            if len(pts) > 4:
+                pygame.draw.lines(self.surface, lerp(color, BG, 0.6), False, pts, 1)
+                pygame.draw.lines(self.surface, lerp(color, BG, 0.2), False, pts[-4:], 1)
+            else:
+                pygame.draw.lines(self.surface, lerp(color, BG, 0.4), False, pts, 1)
 
-    def _update_flashes(self, world: Ecosystem) -> None:
-        """Spawn a pulse wherever food disappeared since the last frame
-        (i.e. was eaten) and age out old pulses."""
-        cur = {(int(f.x), int(f.y)) for f in world.food}
-        for p in self._prev_food - cur:
-            self.flashes.append((float(p[0]), float(p[1]), 0.35))
-        self._prev_food = cur
-        # Age flashes; drop the dead ones.
-        kept = []
-        for x, y, age in self.flashes:
-            age -= self._flash_tick
-            if age > 0:
-                kept.append((x, y, age))
-        self.flashes = kept
-
-    def _draw_flashes(self) -> None:
-        """Draw each eat-pulse as an expanding, fading ring."""
-        for x, y, age in self.flashes:
-            t = age / 0.35  # 1..0 over the pulse's life
-            r = int(round((0.35 - age) * 120)) + 3
-            col = _lerp(FOOD, (255, 200, 80), 1.0 - t)
-            alpha = int(200 * t)
-            pygame.draw.circle(self.surface, (*col, alpha), (int(x), int(y)), r, max(1, int(1 + t * 2)))
+    # --- frame ------------------------------------------------------------
 
     def render(self, world: Ecosystem, selected: Organism | None = None,
-           snapshot: dict | None = None) -> None:
+               kin: frozenset[int] = frozenset(), snapshot: dict | None = None,
+               dt: float = 1 / 60) -> None:
         """Draw the scene. If a `snapshot` (from simulation.snapshot) is
         given it is rendered instead of the live world — used by the
-        time-machine replay. Background and history chart stay live."""
+        time-machine replay, which has no live trails or pulses."""
         self.surface.blit(self.background, (0, 0))
 
         food = world.food if snapshot is None else snapshot["food"]
         organisms = world.organisms if snapshot is None else snapshot["organisms"]
-        live = snapshot is None  # trails only make sense on the live world
+        live = snapshot is None
 
         # Food under the organisms (a soft amber orb, consistent with the cells)
         fs = self.food_sprite.get_width() // 2
@@ -1215,115 +2397,93 @@ class Renderer:
         if live:
             self._update_trails(world)
             self._draw_trails(world)
-            self._update_flashes(world)
-            self._draw_flashes()
+            self._age_pulses(dt)
+            self._draw_pulses()
+
+        # Kin first, so the family line reads as a halo behind the herd.
+        if selected is not None and kin:
+            self._draw_kin(organisms, kin, selected.id)
 
         selected_pos: tuple[float, float] | None = None
         for o in organisms:
-            radius = body_radius_px(o.genome.size)
-            tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
-            aggression = o.genome.aggression
-            tick_color = _lerp(HEADING, HEADING_PRED, aggression)
-
-            # heading tick: a short directional notch under the body
-            pygame.draw.line(
-                self.surface,
-                tick_color,
-                (o.x, o.y),
-                (o.x + math.cos(o.heading) * tick,
-                 o.y + math.sin(o.heading) * tick),
-                1,
-            )
-            # body: pre-rendered orb (aggression + radius + energy brightness)
-            lvl = min(
-                ENERGY_LEVELS - 1,
-                max(0, int(o.energy / world.config.max_energy * ENERGY_LEVELS)),
-            )
-            agg = min(
-                AGGRESSION_BUCKETS - 1,
-                max(0, int(aggression * AGGRESSION_BUCKETS)),
-            )
-            orb = self.atlas[(agg, round(radius), lvl)]
-            self.surface.blit(orb, (int(o.x) - orb.get_width() // 2,
-                                    int(o.y) - orb.get_height() // 2))
-
-            # ready to mate: a thin ring around the body
-            if o.readiness >= 1.0:
-                ring = _lerp(ACCENT, PREDATOR, aggression)
-                pygame.draw.circle(
-                    self.surface,
-                    ring,
-                    (int(o.x), int(o.y)),
-                    round(radius) + 2,
-                    1,
-                )
+            self._draw_organism(o, world.config.max_energy)
             if selected is not None and o.id == selected.id:
                 selected_pos = (o.x, o.y)
 
-        # Selection ring: bright and slightly larger, drawn last so it sits on top.
         if selected is not None and selected_pos is not None:
-            r = round(body_radius_px(selected.genome.size)) + 4
-            pygame.draw.circle(self.surface, (255, 255, 255),
-                               (int(selected_pos[0]), int(selected_pos[1])), r, 2)
-            pygame.draw.circle(self.surface, ACCENT,
-                               (int(selected_pos[0]), int(selected_pos[1])), r + 2, 1)
+            self._draw_reticle(selected_pos, body_radius_px(selected.genome.size), selected.id)
 
-        self._draw_history(world)
+    def _draw_organism(self, o: Organism, max_energy: float) -> None:
+        radius = body_radius_px(o.genome.size)
+        tick = 4 + o.genome.speed * MAX_TICK  # 4..18 px
+        aggression = o.genome.aggression
+        tick_color = lerp(HEADING, HEADING_PRED, aggression)
 
-    def _draw_history(self, world: Ecosystem) -> None:
-        """Bottom-right chart: population, avg speed and avg aggression over
-        the last few minutes, each drawn in its own way so the arms race is
-        readable at a glance."""
-        hist = world.history
-        if len(hist) < 2:
-            return
-        w, h = self.surface.get_size()
-        panel = pygame.Rect(w - 196, h - 84, 184, 74)
-        pygame.draw.rect(self.surface, PANEL, panel, border_radius=6)
-        pygame.draw.rect(self.surface, PANEL_BORDER, panel, width=1, border_radius=6)
+        # heading tick: a short directional notch under the body
+        pygame.draw.line(
+            self.surface,
+            tick_color,
+            (o.x, o.y),
+            (o.x + math.cos(o.heading) * tick, o.y + math.sin(o.heading) * tick),
+            1,
+        )
+        orb = self.atlas[
+            (aggression_bucket(aggression), round(radius),
+             energy_level(o.energy, max_energy))
+        ]
+        self.surface.blit(orb, (int(o.x) - orb.get_width() // 2,
+                                int(o.y) - orb.get_height() // 2))
 
-        title_y = panel.top + 8
-        self.surface.blit(self.font.render("pop / speed / aggression", True, TEXT_DIM),
-                          (panel.left + 6, title_y))
+        # ready to mate: a thin ring around the body
+        if o.readiness >= 1.0:
+            ring = lerp(ACCENT, PREDATOR, aggression)
+            pygame.draw.circle(self.surface, ring, (int(o.x), int(o.y)),
+                               round(radius) + 2, 1)
 
-        plot = panel.inflate(-12, -38).move(0, 16)
-        n = len(hist)
-        pop_scale = float(world.config.max_population)
+    def _draw_kin(self, organisms, kin: frozenset[int], selected_id: int) -> None:
+        """A faint ring on every living member of the selected creature's
+        family line, so you can watch a family take over the plate."""
+        for o in organisms:
+            if o.id in kin and o.id != selected_id:
+                pygame.draw.circle(
+                    self.surface, ACCENT_DIM, (int(o.x), int(o.y)),
+                    round(body_radius_px(o.genome.size)) + 3, 1,
+                )
 
-        def polyline(key: int, scale: float, color: tuple[int, int, int]) -> None:
-            pts = []
-            for i, sample in enumerate(hist):
-                x = plot.left + (i / (n - 1)) * plot.width
-                y = plot.bottom - min(1.0, sample[key] / scale) * plot.height
-                pts.append((x, y))
-            pygame.draw.lines(self.surface, color, False, pts, 1)
+    def _draw_reticle(self, pos: tuple[float, float], radius: float, oid: int) -> None:
+        """Corner brackets on the selected creature, plus its id."""
+        x, y = int(pos[0]), int(pos[1])
+        r = round(radius) + 7
+        pygame.draw.circle(self.surface, (255, 255, 255), (x, y), r, 1)
+        arm = 5
+        for sx, sy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+            cx, cy = x + sx * r, y + sy * r
+            pygame.draw.line(self.surface, (255, 255, 255), (cx, cy), (cx - sx * arm, cy), 2)
+            pygame.draw.line(self.surface, (255, 255, 255), (cx, cy), (cx, cy - sy * arm), 2)
+        tag = self.font.render(f"#{oid}", True, BG)
+        box = tag.get_rect(midbottom=(x, y - r - 2)).inflate(6, 3)
+        pygame.draw.rect(self.surface, (255, 255, 255), box, border_radius=3)
+        self.surface.blit(tag, tag.get_rect(center=box.center))
 
-        polyline(3, pop_scale, ACCENT)  # population
-        polyline(1, 1.0, TEXT_DIM)  # avg speed
-        polyline(4, 1.0, PREDATOR)  # avg aggression
-
-        # Legend (3 dots + labels along the bottom of the panel).
-        legend_y = panel.bottom - 10
-        items = (("pop", ACCENT), ("spd", TEXT_DIM), ("agg", PREDATOR))
-        x = panel.left + 6
-        for label, color in items:
-            pygame.draw.circle(self.surface, color, (x + 3, legend_y), 2)
-            x += 8
-            self.surface.blit(self.font.render(label, True, color), (x, legend_y - 5))
-            x += self.font.size(label)[0] + 10
-
-    def draw_selected_banner(self, o: Organism, font: pygame.font.Font) -> None:
-        """A small readout pinned under the selected organism with its id."""
-        self.surface.blit(font.render(f"#{o.id}", True, (255, 255, 255)),
-                          (int(o.x) - 8, int(o.y) + 6))
+    def present(self, screen: pygame.Surface, rect: pygame.Rect) -> None:
+        """Blit the plate into its place in the layout."""
+        screen.blit(self.surface, rect.topleft)
+        pygame.draw.rect(screen, PANEL_BORDER, rect, width=1, border_radius=6)
 
 
 # ===== main.py =====
 """EvoLab — an artificial ecosystem simulator.
 
 Run:  python main.py
-Controls:  Space = pause/resume; R = replay the last minute (time machine);
-Esc = stop replay; mouse = pause/Replay buttons, speed & mutation sliders.
+
+Controls:  Space = pause · R = replay the last minute (time machine) ·
+Esc = leave replay · click a creature to inspect it · drag the header
+sliders for speed and mutation rate.
+
+The app is only the shell: it owns the clock, the window, the selection
+and the time machine, hands the world to the renderer and the chrome to
+the HUD, and wires the two to the same state. The simulation knows
+nothing about any of it.
 """
 
 import argparse
@@ -1334,28 +2494,21 @@ from collections import deque
 import pygame
 
 
-# True under PyScript/Pyodide (WebAssembly) — the browser drives the
-# frame timing, so the loop must yield with `await` instead of blocking.
-IN_BROWSER = sys.platform == "emscripten"
-
-WIDTH, HEIGHT = 1280, 800
-
 # Fixed simulation step in seconds (60 Hz game-logic tick).
 STEP = 1 / 60
 # Max steps caught up per frame — prevents the "spiral of death"
 # when the window is dragged/backgrounded at high speed.
 MAX_STEPS_PER_FRAME = 32
 
-def _load_font(names: str, size: int, bold: bool = False):
-    """SysFont on desktop; falls back to pygame's bundled font where
-    system fonts are unavailable (e.g. the Pyodide web build)."""
-    try:
-        f = pygame.font.SysFont(names, size, bold=bold)
-        if f is not None:
-            return f
-    except Exception:
-        pass
-    return pygame.font.Font(None, size)
+# Time machine: snapshot cadence and how much of the past is kept.
+SNAP_INTERVAL = 0.25
+SNAP_MAX = 240  # ~60s of recorded history
+REPLAY_STEP = 0.10  # sim-seconds advanced per snapshot while auto-playing
+
+# True under PyScript/Pyodide (WebAssembly) — the browser drives the
+# frame timing, so the loop must yield with `await` instead of blocking
+# on the clock.
+IN_BROWSER = sys.platform == "emscripten"
 
 
 async def main() -> int:
@@ -1364,86 +2517,86 @@ async def main() -> int:
         "--frames", type=int, default=0,
         help="quit after N rendered frames (0 = run until closed)",
     )
+    parser.add_argument(
+        "--shot", default="", metavar="PATH",
+        help="save the last rendered frame to PATH (headless verification)",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=0, help="seed the world's randomness (0 = any)",
+    )
     args = parser.parse_args()
+    if args.shot and not args.frames:
+        args.frames = 240  # give the world a few seconds before the shot
+    if args.seed:
+        import random
+
+        random.seed(args.seed)
 
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    font = _load_font("dejavusansmono,consolas,monospace", 14)
-    logo_font = _load_font("dejavusans,verdana,sans-serif", 14, bold=True)
+    pygame.display.set_caption("EvoLab")
+    fonts = Fonts()
     clock = pygame.time.Clock()
 
-    world = Ecosystem(
-        WorldConfig(
-            width=WIDTH, height=HEIGHT, organisms=80,
-            wander_turn_rate=1.6,
-        )
-    )
-    renderer = Renderer(screen)
-    inspector = Inspector(font)
-    selected: object | None = None  # the Organism currently picked
-
-    # --- header chrome -------------------------------------------------
-    header = pygame.Rect(12, 12, WIDTH - 24, 46)
-    cy = header.centery
-    logo = Label((header.left + 16, cy), "EVOLAB", logo_font, ACCENT)
-    population = Label((140, cy), "Population: 80", font)
-    food = Label((272, cy), "Food: 0", font)
-    generation = Label((362, cy), "Gen: 1", font)
-    traits = Label((444, cy), "avg speed 50%  size 50%", font)
-    pause_btn = Button((650, cy - 14, 100, 28), "Pause", font)
-    mut_label = Label((764, cy), "mut", font, TEXT_DIM)
-    mut_slider = Slider((798, cy - 8, 110, 16), font, 0.001, 0.20, 0.05, step=0.001)
-    mut_value = Label((914, cy), "5.0%", font)
-    speed_value = Label((966, cy), "1.0x", font)
-    speed_slider = Slider((1006, cy - 8, 170, 16), font, 0.25, 20.0, 1.0)
-    replay_btn = Button((1178, cy - 14, 80, 28), "Replay", font)
-
+    # --- app state ------------------------------------------------------
     paused = False
+    selected = None  # the Organism currently picked
+    kin: frozenset[int] = frozenset()
+    _kin_key = None  # (selected id, births) the cached kin set was built for
     accumulator = 0.0
     frame = 0
 
-    # --- time machine (replay) state ----------------------------------
-    # Snapshots of the world taken every SNAP_INTERVAL sim-seconds, kept in
-    # a bounded ring. Press R (or the Replay button) to enter replay; drag
-    # the scrub slider (under the header) to scrub through the recording.
-    SNAP_INTERVAL = 0.25
-    SNAP_MAX = 240  # ~60s of history
+    # --- time machine ----------------------------------------------------
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False
     replay_idx = 0
     _manual_seek = False  # user grabbed the scrubber; stop auto-advance
     _replay_acc = 0.0
-    _replay_step = 0.10  # sim-seconds per snapshot while auto-playing
-    # Scrub bar spanning the recorded window, shown only while replaying.
-    replay_slider = Slider(
-        (16, 64, WIDTH - 32, 14), font, 0, SNAP_MAX - 1, 0, step=1,
-    )
 
-    def _on_widget(pos: tuple[int, int]) -> bool:
-        """True if a click point is over the header chrome (where sliders
-        and buttons live), so plate-clicks don't steal focus."""
-        if header.collidepoint(pos):
-            return True
-        return any(w.rect.collidepoint(pos) for w in (pause_btn, mut_slider, speed_slider, replay_btn))
+    def toggle_pause() -> None:
+        nonlocal paused
+        paused = not paused
 
-    def _toggle_replay() -> None:
-        nonlocal replaying, replay_idx, _replay_acc, _manual_seek
+    def toggle_replay() -> None:
+        nonlocal replaying, replay_idx, _replay_acc, _manual_seek, paused
         if not snapshots:
             return
         if not replaying:
-            # The scrubber spans exactly what we've recorded, so the end
-            # of the bar is always the newest frame (no dead space).
-            replay_slider.max = max(1, len(snapshots) - 1)
             replaying = True
             paused = True
             replay_idx = 0
             _replay_acc = 0.0
             _manual_seek = False
-            replay_slider.value = 0.0
+            hud.set_replay_span(len(snapshots))
         else:
             replaying = False
             replay_idx = 0
+
+    def seek(index: int) -> None:
+        nonlocal replay_idx, _manual_seek
+        if not snapshots:
+            return
+        _manual_seek = True
+        replay_idx = min(len(snapshots) - 1, max(0, index))
+
+    def pick(x: int, y: int) -> None:
+        """A click on the plate selects the creature under it, or clears."""
+        nonlocal selected
+        selected = world.organism_at(x, y, tolerance=3)
+
+    hud = Hud((WIDTH, HEIGHT), fonts, toggle_pause, toggle_replay, seek)
+
+    # The world is exactly the size of the plate the layout reserved for it.
+    world = Ecosystem(
+        WorldConfig(
+            width=hud.plate.width,
+            height=hud.plate.height,
+            organisms=90,
+            wander_turn_rate=1.6,
+        )
+    )
+    renderer = Renderer(hud.plate.size)
 
     running = True
     while running:
@@ -1455,68 +2608,53 @@ async def main() -> int:
             dt = min(clock.tick(0) / 1000.0, 0.25)
         else:
             dt = min(clock.tick(60) / 1000.0, 0.25)
+        mouse = pygame.mouse.get_pos()
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
-                paused = not paused
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_r:
-                _toggle_replay()
-            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                if replaying:
-                    _toggle_replay()
-            elif event.type == pygame.KEYDOWN and replaying:
-                if event.key == pygame.K_LEFT and snapshots:
-                    _manual_seek = True
-                    replay_idx = max(0, replay_idx - 1)
-                    replay_slider.value = float(replay_idx)
-                elif event.key == pygame.K_RIGHT and snapshots:
-                    _manual_seek = True
-                    replay_idx = min(len(snapshots) - 1, replay_idx + 1)
-                    replay_slider.value = float(replay_idx)
-            if pause_btn.handle(event):
-                paused = not paused
-            speed_slider.handle(event)
-            mut_slider.handle(event)
-            if replaying:
-                replay_slider.handle(event)
-                if replay_slider.dragging:
-                    # Scrub to the dragged frame and pause auto-play.
-                    _manual_seek = True
-                    replay_idx = min(len(snapshots) - 1, int(replay_slider.value))
-            if replay_btn.handle(event):
-                _toggle_replay()
+                continue
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    toggle_pause()
+                elif event.key == pygame.K_r:
+                    toggle_replay()
+                elif event.key == pygame.K_ESCAPE and replaying:
+                    toggle_replay()
+                elif event.key == pygame.K_LEFT and replaying:
+                    seek(replay_idx - 1)
+                    hud.scrub.value = float(replay_idx)
+                elif event.key == pygame.K_RIGHT and replaying:
+                    seek(replay_idx + 1)
+                    hud.scrub.value = float(replay_idx)
+            hud.handle(event, replaying)
+            # Clicking the plate (not the chrome) picks a creature.
+            if (event.type == pygame.MOUSEBUTTONDOWN and event.button == 1
+                    and hud.plate.collidepoint(event.pos)
+                    and not hud.chrome_at(event.pos, replaying)):
+                pick(event.pos[0] - hud.plate.left, event.pos[1] - hud.plate.top)
 
-            # Click on the plate to select an organism (or clear any
-            # selection when clicking empty space, away from the widgets).
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                if not _on_widget(event.pos):
-                    picked = world.organism_at(event.pos[0], event.pos[1], tolerance=2)
-                    selected = picked if picked is not None else None
-
-        world.config.mutation_rate = mut_slider.value
+        world.config.mutation_rate = hud.mutation
+        events = world.take_events()
+        screen.fill(BG)
 
         if replaying:
             if _manual_seek:
-                # The user is scrubbing: the slider position is the frame.
-                replay_idx = min(len(snapshots) - 1, max(0, int(replay_slider.value)))
+                replay_idx = min(len(snapshots) - 1, max(0, int(hud.scrub.value)))
             else:
-                # Auto-play: advance the playhead; move the knob along.
-                _replay_acc += dt * speed_slider.value
-                while _replay_acc >= _replay_step and snapshots:
-                    _replay_acc -= _replay_step
+                _replay_acc += dt * hud.speed
+                while _replay_acc >= REPLAY_STEP:
+                    _replay_acc -= REPLAY_STEP
                     replay_idx += 1
                     if replay_idx >= len(snapshots):
-                        replay_idx = 0  # loop
-                replay_slider.value = float(replay_idx)
-            replay_frame = snapshots[replay_idx]
-            renderer.render(world, selected=None, snapshot=replay_frame)
+                        replay_idx = 0  # loop the recording
+                hud.scrub.value = float(replay_idx)
+            renderer.render(world, snapshot=snapshots[replay_idx], dt=dt)
         else:
             if not paused:
-                # fixed timestep with accumulator: speed scales the number
-                # of steps per real second, never the size of a step
-                accumulator += dt * speed_slider.value
+                # Fixed timestep with accumulator: speed scales the number
+                # of steps per real second, never the size of a step.
+                accumulator += dt * hud.speed
                 steps = 0
                 while accumulator >= STEP and steps < MAX_STEPS_PER_FRAME:
                     world.update(STEP)
@@ -1525,59 +2663,37 @@ async def main() -> int:
                 if steps == MAX_STEPS_PER_FRAME:
                     accumulator = 0.0  # drop the backlog
 
-            # Record a snapshot for the time machine on a bounded cadence.
-            _snap_acc += dt * (speed_slider.value if not paused else 0.0)
-            while _snap_acc >= SNAP_INTERVAL:
-                _snap_acc -= SNAP_INTERVAL
-                snapshots.append(capture_snapshot(world))
+                # Record a frame for the time machine on a fixed cadence.
+                _snap_acc += dt * hud.speed
+                while _snap_acc >= SNAP_INTERVAL:
+                    _snap_acc -= SNAP_INTERVAL
+                    snapshots.append(capture_snapshot(world))
 
-            sel = selected if selected is not None and selected in world.organisms else None
-            renderer.render(world, selected=sel)
-            if sel is not None:
-                renderer.draw_selected_banner(sel, font)
-                inspector.draw(screen, sel, world.config)
+            # A selection is dropped when its creature dies.
+            if selected is not None and selected.dead:
+                selected = None
+            # Kin rings follow the selected family line; recomputed only
+            # when the line could have changed (a birth) or the pick moves.
+            key = (selected.id, world.births, len(world.organisms)) if selected else None
+            if key != _kin_key:
+                _kin_key = key
+                kin = world.lineage_members(selected.lineage) if selected else frozenset()
+            renderer.consume(events)
+            renderer.render(world, selected=selected, kin=kin, dt=dt)
 
-        # --- chrome -----------------------------------------------------
-        pygame.draw.rect(screen, PANEL, header, border_radius=8)
-        pygame.draw.rect(screen, PANEL_BORDER, header, width=1, border_radius=8)
-        population.set_text(f"Population: {len(world.organisms)}")
-        food.set_text(f"Food: {len(world.food)}")
-        generation.set_text(f"Gen: {max((o.generation for o in world.organisms), default=0)}")
-        speed_value.set_text(f"{speed_slider.value:.1f}x")
-        mut_value.set_text(f"{mut_slider.value * 100:.1f}%")
-        traits.set_text(
-            f"spd {round(world.trait_average('speed') * 100)}%"
-            f"  sz {round(world.trait_average('size') * 100)}%"
-            f"  ag {round(world.trait_average('aggression') * 100)}%"
-        )
-        logo.draw(screen)
-        population.draw(screen)
-        food.draw(screen)
-        generation.draw(screen)
-        traits.draw(screen)
-        mut_label.draw(screen)
-        mut_slider.draw(screen)
-        mut_value.draw(screen)
-        speed_value.draw(screen)
-        speed_slider.draw(screen)
-        pause_btn.draw(screen)
-        replay_btn.draw(screen)
-
-        # Time-machine scrub bar: a panel under the header with a labelled
-        # slider spanning the recording. Drag it to hunt for a moment.
-        if replaying and snapshots:
-            scrub = pygame.Rect(12, 52, WIDTH - 24, 34)
-            pygame.draw.rect(screen, PANEL, scrub, border_radius=6)
-            pygame.draw.rect(screen, PREDATOR, scrub, width=1, border_radius=6)
-            pos = font.render(f"{replay_idx + 1} / {len(snapshots)}", True, TEXT)
-            screen.blit(pos, pos.get_rect(midright=(scrub.right - 8, scrub.centery)))
-            replay_slider.draw(screen)
-
+        hud.consume(events, world.time, world.max_generation)
+        renderer.present(screen, hud.plate)
+        hud.draw(screen, world, selected, kin, paused,
+                 Replay(replay_idx, len(snapshots)) if (replaying and snapshots) else None,
+                 clock.get_fps(), mouse)
         pygame.display.flip()
+
         frame += 1
         if args.frames and frame >= args.frames:
             running = False
 
+    if args.shot:
+        pygame.image.save(screen, args.shot)
     pygame.quit()
     return 0
 

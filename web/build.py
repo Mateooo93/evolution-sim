@@ -16,12 +16,17 @@ ROOT = Path(__file__).resolve().parent.parent
 # (module name, source file) in dependency order
 MODULES = [
     ("ui.theme", "ui/theme.py"),
+    ("ui.fonts", "ui/fonts.py"),
     ("simulation.genome", "simulation/genome.py"),
     ("simulation.food", "simulation/food.py"),
     ("simulation.types", "simulation/types.py"),
     ("simulation.spatial", "simulation/spatial.py"),
     ("simulation.ecosystem", "simulation/ecosystem.py"),
+    ("rendering.orbs", "rendering/orbs.py"),
     ("ui.widgets", "ui/widgets.py"),
+    ("ui.charts", "ui/charts.py"),
+    ("ui.inspector", "ui/inspector.py"),
+    ("ui.hud", "ui/hud.py"),
     ("rendering.renderer", "rendering/renderer.py"),
     ("main", "main.py"),
 ]

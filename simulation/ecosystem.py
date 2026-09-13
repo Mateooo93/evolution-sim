@@ -2,10 +2,14 @@
 
 import math
 import random
+from collections import deque
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from .food import Food
 from .genome import (
+    PREDATOR_MIN,
+    PREY_MAX,
     Genome,
     move_speed_px,
     body_radius_px,
@@ -14,7 +18,20 @@ from .genome import (
     mutate,
 )
 from .spatial import SpatialGrid
-from .types import Organism
+from .types import Event, Organism
+
+
+class Sample(NamedTuple):
+    """One per-second observation of the world, for the trends chart."""
+
+    t: float
+    speed: float  # mean speed trait
+    size: float  # mean size trait
+    population: int
+    aggression: float  # mean aggression trait
+    food: int
+    energy: float  # mean energy, as a fraction of max
+    predators: int  # organisms above the predator aggression threshold
 
 
 @dataclass
@@ -27,10 +44,10 @@ class WorldConfig:
     # --- energy ---------------------------------------------------------
     max_energy: float = 100.0
     # drain/s = (base + range*metabolism) * (1 + speed_cost*speed + size_cost*size)
-    #          * (1 - efficiency_saving*efficiency)
-    base_metabolism: float = 0.30  # energy/s at minimal traits
-    metabolism_range: float = 0.55  # extra burn from the metabolism trait
-    speed_cost: float = 0.6  # upkeep multiplier weight for speed trait
+    #          * (1 - efficiency_saving*efficiency) * (1 + predation_drain*aggression)
+    base_metabolism: float = 0.22  # energy/s at minimal traits
+    metabolism_range: float = 0.40  # extra burn from the metabolism trait
+    speed_cost: float = 0.9  # upkeep weight for the speed trait
     size_cost: float = 0.8  # upkeep multiplier weight for size trait
     efficiency_saving: float = 0.5  # fraction of upkeep efficiency can erase
 
@@ -39,12 +56,25 @@ class WorldConfig:
     lifespan_range: float = 480.0  # extra seconds at lifespan trait 1
 
     # --- food -------------------------------------------------------------
-    food_spawn_rate: float = 0.9  # food items per second — slower than the
-    #   population eats, so the plate visibly clears and refills (the "it
-    #   is being eaten" pulse) instead of sitting full all the time.
-    max_food: int = 90  # food cap (the world is finite) — keep it scarce
-    food_energy: float = 30.0  # energy per food item
-    initial_food_fraction: float = 0.45  # food present at t=0 (world starts alive)
+    # The plate is a flow, not a stock: the spawn rate sets how much
+    # energy the ecosystem receives per second, and the population settles
+    # where consumption meets supply.
+    #
+    # Food arrives in *patches* rather than scattered uniformly. Uniform
+    # food makes speed a runaway scramble trait — when every meal is a
+    # lone dot, the fastest creature wins every race and the population
+    # converges on maximum speed, which in turn makes prey uncatchable and
+    # predation impossible. Patches change that: a forager that finds a
+    # meadow eats many meals without travelling, so speed stops being the
+    # only thing that matters, and prey that gather at a patch are exactly
+    # where a hunter knows to look.
+    food_spawn_rate: float = 9.0  # food items per second (supply, not patches)
+    food_patch_size: int = 10  # items dropped per patch
+    food_patch_radius: float = 55.0  # px, spread of one patch
+    max_food: int = 320  # food cap (the world is finite)
+    food_energy: float = 12.0  # energy per food item — small meals, many of them
+    initial_food_fraction: float = 0.35  # food present at t=0 (world starts alive)
+
 
     # --- senses ------------------------------------------------------------
     vision_base: float = 30.0  # sensing range in px at vision trait 0
@@ -63,34 +93,62 @@ class WorldConfig:
     # Aggressive organisms breed slower — a direct reproductive edge for
     # prey that keeps the population majority herbivore even under raids.
     repro_aggression_penalty: float = 0.8
-    max_population: int = 300  # no births above this (safety valve)
+    max_population: int = 400  # no births above this (safety valve)
     mutation_rate: float = 0.05  # per-trait mutation probability (slider-driven)
     # --- immigration -----------------------------------------------------
     # Safety net: a stream of fresh random immigrants keeps the lab
     # population from emptying out entirely. Now that reproduction is
     # live it rarely fires, but it guards against total extinction.
-    min_population: int = 40
-    migration_rate: float = 1.0  # immigrants per second while below floor
+    min_population: int = 28
+    migration_rate: float = 0.15  # immigrants per second while below floor
 
-    # --- predation -----------------------------------------------------
+    # --- predation -------------------------------------------------------
     # Predation is continuous, driven by the aggression trait on a
     # 0..1 spectrum. Every hungry organism hunts weaker neighbours with
     # probability = aggression, and forages plant food with probability
-    # (1 - aggression). Aggression also adds an upkeep surcharge, so a
-    # truly carnivorous lifestyle has to pay for itself. Because the
-    # benefit scales smoothly with the trait, aggressive predators can
-    # evolve from a clean herbivore lineage step by step in mutations.
-    predation_drain: float = 2.5  # steep upkeep: hunting must pay for itself
-    prey_energy_gain: float = 22.0  # energy a predator gains per catch
+    # (1 - aggression). The cost sits on the *behaviour* rather than on
+    # the gene: a chase burns extra energy, so hunting has to pay for
+    # itself, but carrying an aggression gene is nearly free. That keeps
+    # the climb smooth — a mutant that hunts a little pays a little —
+    # instead of digging a fitness valley no intermediate can cross.
+    predation_drain: float = 0.3  # small upkeep surcharge (a hunter's body)
+    hunt_drain_cost: float = 1.2  # extra drain/s while actively chasing prey
+    prey_energy_gain: float = 45.0  # energy a predator gains per catch
+    # A hunter's gut is built for meat: the same plant is worth less to
+    # it. This is what keeps a grazer majority — mid-aggression creatures
+    # are mediocre at both trades, so selection pushes the population
+    # toward the two ends instead of everyone drifting to "hunter".
+    forage_penalty: float = 0.2  # plant energy lost at full aggression
     capture_bonus: float = 6.0  # px added to reach beyond both radii
-    hunt_interval: float = 0.15  # seconds between prey re-scans
+    # A hungry creature commits to hunting or foraging for a *span* of a
+    # few seconds, so roles read as behaviour instead of flickering every
+    # tick — and a hunter that finds nothing catchable goes back to plants
+    # instead of burning energy on a hopeless chase.
+    role_span: float = 2.5  # seconds committed to one role per decision
     # Aggression must exceed a sensed organism's by at least this margin
     # for it to count as prey (and to trigger fleeing) — so similar
     # neighbours ignore each other instead of flinching constantly.
     hunt_margin: float = 0.1
+    # How much faster a hunter must be than its quarry before the chase
+    # is worth starting. Small, because chases here are endurance
+    # chases: a hunted organism can only sprint while it still has the
+    # energy for it, and a predator that is even slightly faster runs it
+    # down once it tires. Speed decides who escapes *alert and fresh*.
+    catch_margin: float = 1.05
+    # Speed is not free to use, only to have: below this fraction of max
+    # energy an organism cannot sprint at all, which is the window a
+    # hunter's stamina hunt lives in.
+    sprint_energy_floor: float = 0.25
+    chase_timeout: float = 10.0  # seconds before a hunter abandons a chase
+    # A threat only counts as a threat if it could actually run you down:
+    # prey that out-run a predator simply don't flee it. Paired with the
+    # same speed test on the hunter's side, the arms race becomes a real
+    # one — speed is a refuge, not decoration.
+    # A predator must also be *close* before panic is worth its price.
+    danger_range_frac: float = 0.45  # flight zone, as a fraction of vision
     flee_strength: float = 2.6  # how hard a weak-minded organism turns away
-    flee_speed_boost: float = 1.5  # sprint multiplier while fleeing
-    flee_drain_cost: float = 1.2  # extra drain/s while sprinting
+    flee_speed_boost: float = 1.35  # sprint multiplier while fleeing
+    flee_drain_cost: float = 0.8  # extra drain/s while sprinting
     # Predators must stock far more energy to breed, so predator numbers
     # lag prey availability (predator-prey cycling) instead of flooding.
     predator_mate_gate_mult: float = 2.0
@@ -110,49 +168,81 @@ class Ecosystem:
         self.time = 0.0  # simulation time in seconds
         self.deaths: dict[str, int] = {"starvation": 0, "age": 0, "eaten": 0}
         self.births = 0  # lifetime count of births
-        # (t, avg_speed, avg_size, population, avg_aggression) / sim second
-        self.history: list[tuple[float, float, float, int, float]] = []
+        self.migrants = 0  # lifetime count of immigrants
+        # Per-second observations for the trends chart.
+        self.history: list[Sample] = []
         self._history_acc = 0.0
         self.grid = SpatialGrid(config.width, config.height)
+        # A second grid for food, so sensing scales with what is actually
+        # nearby instead of scanning every plant on the plate.
+        self.food_grid = SpatialGrid(config.width, config.height)
         self._next_id = 1
         self._migration_acc = 0.0
         self._food_acc = 0.0
         self._food_ids: set[int] = set()
         self.eaten = 0  # lifetime count of food items consumed
+        # Deepest genealogical generation reached so far (cheap to keep
+        # here — the HUD shows it every frame).
+        self.max_generation = 1
+        # What happened lately, for the view layers (plate pulses, event
+        # log). Drained by the UI with `take_events`; bounded so a long
+        # unattended run can't grow it.
+        self.events: deque[Event] = deque(maxlen=256)
         # Seed the world with a fully prey population (aggression pinned to
         # zero) so predators are not present at t=0: they emerge later as
         # aggressive mutations spread. That is the arc you actually watch.
         for _ in range(config.organisms):
-            self._spawn(initial_prey=True)
+            self._spawn(founder=True)
         # The world starts with food already on the plate, not empty.
-        for _ in range(int(config.max_food * config.initial_food_fraction)):
-            self._spawn_food()
+        while len(self.food) < config.max_food * config.initial_food_fraction:
+            self._spawn_patch()
+        self.food_grid.rebuild(self.food)
+
+    # --- events -----------------------------------------------------------
+
+    def _emit(self, kind: str, x: float, y: float, actor: int, other: int = 0) -> None:
+        self.events.append(Event(self.time, kind, x, y, actor, other))
+
+    def take_events(self) -> list[Event]:
+        """Drain everything that happened since the last call."""
+        if not self.events:
+            return []
+        out = list(self.events)
+        self.events.clear()
+        return out
 
     # --- population -----------------------------------------------------
 
-    def _spawn(self, initial_prey: bool = False) -> None:
-        c = self.config
-        if initial_prey:
-            # Pin aggression to zero so the founder stock is all prey.
-            # Predators then arise only as aggressive mutations spread.
-            genome = random_genome()
-            genome.aggression = 0.0
-        else:
-            genome = random_genome()
-        self.organisms.append(
-            Organism(
-                id=self._next_id,
-                x=random.random() * c.width,
-                y=random.random() * c.height,
-                heading=random.random() * 2 * math.pi,
-                genome=genome,
-                energy=random.uniform(0.4, 1.0) * c.max_energy,
-                age=0.0,
-            )
-        )
-        self._next_id += 1
+    def _spawn(self, founder: bool = False) -> None:
+        """Add one organism: the founding stock at t=0, or an immigrant.
 
-    def _kill(self, o: Organism, cause: str) -> None:
+        Both arrive as foragers — aggression is pinned to zero — so
+        predators only ever arise by mutation, and a dying world is
+        reseeded with prey instead of being handed hunters by fiat.
+        """
+        c = self.config
+        genome = random_genome()
+        genome.aggression = 0.0
+        o = Organism(
+            id=self._next_id,
+            x=random.random() * c.width,
+            y=random.random() * c.height,
+            heading=random.random() * 2 * math.pi,
+            genome=genome,
+            energy=random.uniform(0.4, 1.0) * c.max_energy,
+            age=0.0,
+            born_at=self.time,
+        )
+        # An immigrant founds its own family line; the founding stock
+        # likewise starts one line each.
+        o.lineage = o.id
+        self._next_id += 1
+        self.organisms.append(o)
+        if not founder:
+            self.migrants += 1
+            self._emit("arrived", o.x, o.y, o.id)
+
+    def _kill(self, o: Organism, cause: str, by: int = 0) -> None:
         """Flag an organism as dead; swept out at the end of the tick.
 
         Marking (rather than list.remove) keeps the per-organism update
@@ -162,35 +252,56 @@ class Ecosystem:
         if not o.dead:
             o.dead = True
             self.deaths[cause] = self.deaths.get(cause, 0) + 1
+            kind = {"starvation": "starved", "age": "aged"}.get(cause, cause)
+            self._emit(kind, o.x, o.y, o.id, by)
 
     # --- food -------------------------------------------------------------
 
-    def _spawn_food(self) -> None:
+    def _spawn_food(self, x: float | None = None, y: float | None = None) -> None:
         c = self.config
         f = Food(
             id=self._next_id,  # shares the id space with organisms — ids are unique
-            x=random.random() * c.width,
-            y=random.random() * c.height,
+            x=random.random() * c.width if x is None else x,
+            y=random.random() * c.height if y is None else y,
             energy=c.food_energy,
         )
         self._next_id += 1
         self.food.append(f)
         self._food_ids.add(f.id)
 
-    def _eat_food(self, f: Food) -> None:
+    def _spawn_patch(self) -> None:
+        """Drop one clump of food — a meadow, not a speck."""
+        c = self.config
+        cx = random.random() * c.width
+        cy = random.random() * c.height
+        r = c.food_patch_radius
+        for _ in range(c.food_patch_size):
+            if len(self.food) >= c.max_food:
+                return
+            # Uniform inside the disc: sqrt keeps it from bunching at the
+            # centre, so a patch reads as a patch and not a single blob.
+            dist = math.sqrt(random.random()) * r
+            angle = random.random() * 2 * math.pi
+            self._spawn_food(
+                (cx + math.cos(angle) * dist) % c.width,
+                (cy + math.sin(angle) * dist) % c.height,
+            )
+
+    def _eat_food(self, f: Food, o: Organism) -> None:
         self.food.remove(f)
         self._food_ids.discard(f.id)
         self.eaten += 1
+        self._emit("ate", f.x, f.y, o.id)
 
     def _update_food(self, dt: float) -> None:
         c = self.config
         if len(self.food) >= c.max_food:
             self._food_acc = 0.0
             return
-        self._food_acc += dt * c.food_spawn_rate
+        self._food_acc += dt * c.food_spawn_rate / c.food_patch_size
         while self._food_acc >= 1.0 and len(self.food) < c.max_food:
             self._food_acc -= 1.0
-            self._spawn_food()
+            self._spawn_patch()
 
     # --- sensing -----------------------------------------------------------
 
@@ -201,33 +312,16 @@ class Ecosystem:
     def _sense_food(self, o: Organism) -> None:
         """Point `o.target` at the nearest food within vision, or None.
 
-        Toroidal: distances are computed across the wrapped world.
+        The food grid is rebuilt once per tick, so an item eaten earlier
+        this frame can still be in a bucket; the `_food_ids` filter skips
+        those so the scan can't lock onto a meal that is already gone.
         """
-        c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
+        o.target = self.food_grid.nearest(
+            o.x, o.y, self._vision_range(o), accept=self._is_live_food
+        )
 
-        best = None
-        best_d2 = r2
-        for f in self.food:
-            dx = f.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue  # early reject on x alone
-            dy = f.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = f
-        o.target = best
+    def _is_live_food(self, f: Food) -> bool:
+        return f.id in self._food_ids
 
     def _hunts(self, o: Organism, p: Organism) -> bool:
         """Whether `o` would treat `p` as prey: p must be meaningfully
@@ -239,67 +333,44 @@ class Ecosystem:
         )
 
     def _scan_prey(self, o: Organism) -> None:
-        """Point `o.prey_target` at the nearest weaker neighbour in vision."""
-        c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
-        best = None
-        best_d2 = r2
-        for p in self.organisms:
-            if not self._hunts(o, p):
-                continue
-            dx = p.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue
-            dy = p.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = p
-        o.prey_target = best
+        """Point `o.prey_target` at the nearest weaker neighbour in vision
+        that this hunter could actually run down.
+
+        `_outruns` is deliberately a *cruising* speed test: a quarry that
+        is faster than the hunter can never be caught, but one of similar
+        speed can be run to exhaustion. Chases are endurance chases.
+        """
+        o.prey_target = self.grid.nearest(
+            o.x,
+            o.y,
+            self._vision_range(o),
+            accept=lambda p: self._hunts(o, p) and self._outruns(o, p),
+        )
 
     def _scan_danger(self, o: Organism) -> None:
-        """Point `o.danger` at the nearest meaningfully-stronger neighbour
-        (a threat) in vision, or None."""
+        """Point `o.danger` at the nearest real threat in the flight zone.
+
+        A neighbour is only a threat if it is meaningfully more aggressive
+        *and* fast enough to run this organism down — a slower neighbour
+        can never land a catch, so fleeing it would burn sprint energy for
+        nothing. Panic is expensive; the world selects against creatures
+        that panic at nothing.
+        """
         c = self.config
-        range_px = self._vision_range(o)
-        r2 = range_px * range_px
-        half_w, half_h = c.width / 2, c.height / 2
-        best = None
-        best_d2 = r2
-        for p in self.organisms:
-            if (
-                p.dead
-                or p is o
-                or p.genome.aggression - o.genome.aggression < c.hunt_margin
-            ):
-                continue
-            dx = p.x - o.x
-            if dx > half_w:
-                dx -= c.width
-            elif dx < -half_w:
-                dx += c.width
-            if dx * dx > best_d2:
-                continue
-            dy = p.y - o.y
-            if dy > half_h:
-                dy -= c.height
-            elif dy < -half_h:
-                dy += c.height
-            d2 = dx * dx + dy * dy
-            if d2 < best_d2:
-                best_d2 = d2
-                best = p
-        o.danger = best
+        zone = self._vision_range(o) * c.danger_range_frac
+        o.danger = self.grid.nearest(
+            o.x,
+            o.y,
+            zone,
+            accept=lambda p: self._threatens(p, o) and self._outruns(p, o),
+        )
+
+    def _threatens(self, p: Organism, o: Organism) -> bool:
+        return (
+            not p.dead
+            and p is not o
+            and p.genome.aggression - o.genome.aggression >= self.config.hunt_margin
+        )
 
     def _flee(self, o: Organism, danger: Organism, dt: float) -> None:
         """Turn the heading away from `danger` (toroidal bearing).
@@ -349,26 +420,45 @@ class Ecosystem:
             o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
             return
 
-        # Choose a role once per hunger span, gated by the aggression trait.
-        # `on_hunt` persists until the quarry dies or is caught. Do NOT
-        # bump last_sense here — that throttle belongs to the food scan
-        # alone, otherwise a would-be forager never re-senses food.
-        if o.prey_target is None or o.prey_target.dead or self.time - o.last_hunt >= c.hunt_interval:
+        # Commit to a role for a span of seconds (not per tick), gated by
+        # the aggression trait. The commitment is what makes "hunter" and
+        # "forager" read as behaviour on the plate instead of flickering.
+        if self.time >= o.role_until:
             o.on_hunt = random.random() < o.genome.aggression
+            o.role_until = self.time + c.role_span
 
         if o.on_hunt:
             if o.prey_target is None or o.prey_target.dead:
                 self._scan_prey(o)
-            if o.prey_target is not None and not o.prey_target.dead:
-                # Reuse the steer; `_steer_toward` reads o.target, so point
-                # it at the quarry for the turn then restore.
-                saved = o.target
-                o.target = o.prey_target  # type: ignore[assignment]
-                self._steer_toward(o, dt)
-                o.target = saved
-            else:
-                o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
-            return
+                o.last_hunt = self.time
+                o.chase_started = self.time
+            elif self.time - o.last_hunt >= c.sense_interval:
+                # Look around for something better; the clock only resets
+                # when the quarry actually changes, so a hunter that keeps
+                # missing the same prey eventually gives up on it.
+                held = o.prey_target
+                self._scan_prey(o)
+                o.last_hunt = self.time
+                if o.prey_target is not held:
+                    o.chase_started = self.time
+            if o.prey_target is not None:
+                if self.time - o.chase_started >= c.chase_timeout:
+                    # This chase is going nowhere: it is faster than us, or
+                    # we cannot turn tight enough. Stop paying for it.
+                    o.prey_target = None
+                else:
+                    # Reuse the steer; `_steer_toward` reads o.target, so
+                    # point it at the quarry for the turn, then restore.
+                    saved = o.target
+                    o.target = o.prey_target  # type: ignore[assignment]
+                    self._steer_toward(o, dt)
+                    o.target = saved
+                    o.hunting = True
+                    return
+            # No quarry (or the chase was dropped): forage for the rest of
+            # this span instead of burning energy on empty pursuit.
+            o.on_hunt = False
+            o.role_until = self.time + c.role_span
 
         # Foraging for plant food.
         if self.time - o.last_sense >= c.sense_interval:
@@ -380,15 +470,23 @@ class Ecosystem:
         else:
             o.heading += (random.random() - 0.5) * 2 * c.wander_turn_rate * dt
 
+    def _can_sprint(self, o: Organism) -> bool:
+        """Sprinting costs energy, so it needs some in the tank."""
+        return o.energy > self.config.max_energy * self.config.sprint_energy_floor
+
+    def _outruns(self, o: Organism, p: Organism) -> bool:
+        """Whether `o` is fast enough to run `p` down (given a fresh `p`)."""
+        return move_speed_px(o.genome) >= move_speed_px(p.genome) * self.config.catch_margin
+
     def _try_catch(self, o: Organism) -> None:
         """Catch the hunted prey: kill it and gain energy.
 
-        Catching is a hard speed gate: a predator only catches prey that
-        it can actually outrun while the prey sprints away. A faster prey
-        is uncatchable and gets away, so the arms race is real — prey
-        evolve speed to escape, predators evolve speed to chase — and a
-        lone carnivore cannot clear the whole plate, because the faster
-        prey simply outlive it.
+        The catch is a speed contest against the quarry's *current* best:
+        a fresh prey that is already sprinting away is uncatchable for a
+        hunter of similar speed — but the sprint burns energy, so a
+        slower or exhausted prey gets run down. That is what makes this an
+        arms race instead of a wall: prey evolve speed to escape the first
+        seconds, predators evolve speed to keep the chase alive.
         """
         c = self.config
         prey = o.prey_target
@@ -408,12 +506,14 @@ class Ecosystem:
         if dx * dx + dy * dy > reach * reach:
             return
 
-        pred_speed = move_speed_px(o.genome)
-        prey_sprint = move_speed_px(prey.genome) * c.flee_speed_boost
-        if pred_speed < prey_sprint:
-            return  # outrun: the prey escapes
+        prey_speed = move_speed_px(prey.genome)
+        if prey.fleeing and self._can_sprint(prey):
+            prey_speed *= c.flee_speed_boost
+        if move_speed_px(o.genome) < prey_speed * c.catch_margin:
+            return  # outrun: the prey gets away
+
         o.energy = min(c.max_energy, o.energy + c.prey_energy_gain)
-        self._kill(prey, "eaten")
+        self._kill(prey, "eaten", by=o.id)
         o.prey_target = None
 
     def _try_eat(self, o: Organism) -> None:
@@ -434,8 +534,9 @@ class Ecosystem:
             dy += c.height
         reach = body_radius_px(o.genome.size) + 3
         if dx * dx + dy * dy <= reach * reach:
-            o.energy = min(c.max_energy, o.energy + f.energy)
-            self._eat_food(f)
+            gain = f.energy * (1.0 - c.forage_penalty * o.genome.aggression)
+            o.energy = min(c.max_energy, o.energy + gain)
+            self._eat_food(f, o)
             o.target = None
 
     # --- behaviour ------------------------------------------------------
@@ -444,6 +545,9 @@ class Ecosystem:
         """Advance the simulation by `dt` seconds."""
         self.time += dt
         c = self.config
+        # Sense against the food as it stood at the start of the tick; the
+        # grid is a snapshot, and food eaten below is filtered on lookup.
+        self.food_grid.rebuild(self.food)
 
         for o in list(self.organisms):
             if o.dead:
@@ -461,7 +565,7 @@ class Ecosystem:
             self._turn(o, dt)
 
             speed = move_speed_px(o.genome)
-            if o.fleeing:
+            if o.fleeing and self._can_sprint(o):
                 speed *= c.flee_speed_boost
             o.x += math.cos(o.heading) * speed * dt
             o.y += math.sin(o.heading) * speed * dt
@@ -472,8 +576,11 @@ class Ecosystem:
             drain = self._drain(o.genome)
             if o.fleeing:
                 drain += c.flee_drain_cost
+            if o.hunting:
+                drain += c.hunt_drain_cost
             o.energy = max(0.0, o.energy - drain * dt)
             o.fleeing = False  # reset for the next tick
+            o.hunting = False
             if o.energy <= 0.0:
                 self._kill(o, "starvation")
                 continue
@@ -500,16 +607,25 @@ class Ecosystem:
         self._history_acc += dt
         if self._history_acc >= 1.0:
             self._history_acc -= 1.0
+            pop = self.organisms
+            n = len(pop)
+            predators = 0
+            for o in pop:
+                if o.genome.aggression >= PREDATOR_MIN:
+                    predators += 1
             self.history.append(
-                (
-                    self.time,
-                    self.trait_average("speed"),
-                    self.trait_average("size"),
-                    len(self.organisms),
-                    self.trait_average("aggression"),
+                Sample(
+                    t=self.time,
+                    speed=self.trait_average("speed"),
+                    size=self.trait_average("size"),
+                    population=n,
+                    aggression=self.trait_average("aggression"),
+                    food=len(self.food),
+                    energy=(sum(o.energy for o in pop) / n / c.max_energy) if n else 0.0,
+                    predators=predators,
                 )
             )
-            if len(self.history) > 300:
+            if len(self.history) > 600:
                 del self.history[0]
 
     def _steer_toward(self, o: Organism, dt: float) -> None:
@@ -584,11 +700,21 @@ class Ecosystem:
                 energy=c.baby_energy,
                 age=0.0,
                 generation=max(o.generation, partner.generation) + 1,
+                # The line comes from the first parent; both parent links
+                # are kept so a single creature's own descendants can be
+                # traced later.
+                lineage=o.lineage,
+                parent_a=o.id,
+                parent_b=partner.id,
+                born_at=self.time,
             )
             self._next_id += 1
             self._wrap(baby)
             self.organisms.append(baby)
             self.births += 1
+            self._emit("birth", baby.x, baby.y, baby.id, o.id)
+            if baby.generation > self.max_generation:
+                self.max_generation = baby.generation
 
     def _find_partner(self, o: Organism) -> Organism | None:
         """First ready, energetic neighbor within the mating radius."""
@@ -626,6 +752,51 @@ class Ecosystem:
         if not pop:
             return 0.0
         return sum(getattr(o.genome, trait) for o in pop) / len(pop)
+
+    def role_counts(self) -> tuple[int, int, int]:
+        """(prey, mixed, predators) — a single pass over the population."""
+        prey = mixed = pred = 0
+        for o in self.organisms:
+            a = o.genome.aggression
+            if a >= PREDATOR_MIN:
+                pred += 1
+            elif a >= PREY_MAX:
+                mixed += 1
+            else:
+                prey += 1
+        return prey, mixed, pred
+
+    def mean_energy(self) -> float:
+        """Mean energy as a fraction of the maximum, or 0 if empty."""
+        pop = self.organisms
+        if not pop:
+            return 0.0
+        return sum(o.energy for o in pop) / len(pop) / self.config.max_energy
+
+    def lineage_members(self, lineage: int) -> set[int]:
+        """Every living organism descended from the founder of a line."""
+        return {o.id for o in self.organisms if o.lineage == lineage}
+
+    def descendants_of(self, oid: int) -> set[int]:
+        """Every living organism descended from `oid` (any depth).
+
+        Walks the parent links of the living population, so it works for
+        an ancestor that has already died — the line outlives the body.
+        """
+        children: dict[int, list[int]] = {}
+        for o in self.organisms:
+            if o.parent_a is not None:
+                children.setdefault(o.parent_a, []).append(o.id)
+            if o.parent_b is not None:
+                children.setdefault(o.parent_b, []).append(o.id)
+        found: set[int] = set()
+        stack = [oid]
+        while stack:
+            for cid in children.get(stack.pop(), ()):
+                if cid not in found:
+                    found.add(cid)
+                    stack.append(cid)
+        return found
 
     def organism_at(self, x: float, y: float, tolerance: float = 0.0) -> Organism | None:
         """The nearest organism whose body (radius + tolerance) contains the

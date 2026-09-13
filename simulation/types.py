@@ -30,4 +30,31 @@ class Organism:
     last_hunt: float = 0.0  # sim time of the last prey scan
     danger: "Organism | None" = None  # nearest threat sensed (higher aggression)
     fleeing: bool = False  # sprinting away this tick (resets each tick)
+    hunting: bool = False  # chasing prey this tick (resets each tick)
     on_hunt: bool = False  # hunting this hunger span (aggression-weighted)
+    role_until: float = 0.0  # sim time the current role commitment expires
+    chase_started: float = 0.0  # sim time the current chase began
+    # --- descent ---------------------------------------------------------
+    # The family line: every organism carries the id of the founder it
+    # descends from, inherited from its first parent. Line members are the
+    # "kin" the plate highlights when you select one of them.
+    lineage: int = 0
+    parent_a: int | None = None  # first parent (the one lineage comes from)
+    parent_b: int | None = None  # second parent
+    born_at: float = 0.0  # sim time of birth (0 for the founding stock)
+
+
+@dataclass(slots=True)
+class Event:
+    """One thing that happened in the world, for the view layers to read.
+
+    The simulation stays headless: it emits what happened and where, and
+    the renderer / HUD decide whether anything should be drawn or logged.
+    """
+
+    t: float  # sim time
+    kind: str  # 'birth' | 'mate' | 'ate' | 'starved' | 'aged' | 'eaten'
+    x: float
+    y: float
+    actor: int  # organism the event is about
+    other: int = 0  # who caused it (predator on 'eaten', parent on 'birth')
