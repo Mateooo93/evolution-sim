@@ -3,50 +3,45 @@
 
 
 # ===== ui/theme.py =====
-# all the colours in one place, plus a few layout numbers.
-# if something looks wrong colour-wise its probably in here
+# colours. i kept fiddling with these for ages, the greens and reds are the
+# important ones because theyre what the organisms actually use
 
-# panels and backgrounds, darkest to lightest
 BG = (11, 15, 20)
 PANEL = (16, 22, 29)
-RAISED = (23, 31, 41)        # tiles inside a panel, buttons
-RAISED_HOVER = (30, 41, 54)
 PANEL_BORDER = (29, 39, 51)
-BORDER_HOVER = (52, 69, 88)
 METER_BG = (26, 35, 46)
 
-# text
 TEXT = (226, 232, 240)
 TEXT_DIM = (128, 144, 168)
 TEXT_FAINT = (78, 93, 113)
 
-# the fun ones
-ACCENT = (52, 211, 153)      # green, also the UI accent
-ACCENT_DIM = (26, 92, 71)    # for rings that sit behind other stuff
-PREDATOR = (248, 113, 113)   # red
-PREDATOR_DIM = (110, 48, 48)
+ACCENT = (52, 211, 153)      # green, plant eaters + the ui accent
+ACCENT_DIM = (26, 92, 71)
+PREDATOR = (248, 113, 113)   # red, hunters
 FOOD = (212, 175, 55)        # amber
-FOOD_HI = (251, 211, 92)     # the eat pulse, brighter than the food itself
-HEADING = (32, 140, 102)     # the little direction line
+FOOD_HI = (251, 211, 92)
+HEADING = (32, 140, 102)
 HEADING_PRED = (160, 60, 60)
 GOLD = (250, 204, 21)        # replay bar
-GRID_ALPHA = 14              # the faint grid on the plate
+GRID_ALPHA = 14
 
-# layout
-MARGIN = 12                  # gap round the outside of everything
-GAP = 10                     # gap between stacked panels
-PANEL_PAD = 12
+# spacing. everything is measured from these so the layout doesnt drift
+MARGIN = 12
+GAP = 10
+PANEL_PAD = 10
 HEADER_H = 52
-KEYBAR_H = 26
+KEYBAR_H = 24
 SIDEBAR_W = 300
 
 
 # ===== ui/fonts.py =====
-# fonts, loaded once and passed round the UI.
-# SysFont needs actual system fonts which the browser build does not have,
-# so everything goes through load_font which falls back to the pygame one
+# fonts. the browser build has no system fonts at all so everything goes
+# through load_font, which falls back to the one pygame ships with
 
 import pygame
+
+MONO = "dejavusansmono,consolas,dejavusansmono,monospace"
+SANS = "dejavusans,verdana,arial,sans-serif"
 
 
 def load_font(names: str, size: int, bold: bool = False) -> pygame.font.Font:
@@ -55,27 +50,19 @@ def load_font(names: str, size: int, bold: bool = False) -> pygame.font.Font:
         if font is not None:
             return font
     except Exception:
-        pass  # browser, or a machine with no fonts installed
+        pass
     return pygame.font.Font(None, size)
 
 
-MONO = "dejavusansmono,consolas,dejavusansmono,monospace"
-SANS = "dejavusans,verdana,arial,sans-serif"
-
-
 class Fonts:
-    # one of each size/style the UI needs. if you add a new one put it here
-    # instead of calling SysFont in the middle of the drawing code
+    # all monospace apart from the logo. i tried mixing sans and mono for
+    # the headers and it just looked like a website
     def __init__(self) -> None:
-        self.logo = load_font(SANS, 19, bold=True)
-        self.tagline = load_font(SANS, 11)
-        self.title = load_font(SANS, 12, bold=True)  # panel headers
-        self.body = load_font(MONO, 13)
+        self.logo = load_font(SANS, 18, bold=True)
+        self.head = load_font(MONO, 12, bold=True)
+        self.body = load_font(MONO, 12)
         self.small = load_font(MONO, 11)
-        self.tiny = load_font(MONO, 10)  # chart + trait labels
-        self.button = load_font(SANS, 13, bold=True)
-        self.metric = load_font(SANS, 22, bold=True)  # the big numbers
-        self.keycap = load_font(MONO, 10, bold=True)
+        self.tiny = load_font(MONO, 10)
 
 
 # ===== simulation/genome.py =====
@@ -1209,44 +1196,32 @@ def make_orb(color: tuple[int, int, int], radius: int, glow: int = GLOW) -> pyga
 
 
 # ===== ui/widgets.py =====
-# the UI widgets. pygame has no buttons or sliders so these are all drawn
-# from scratch out of rectangles and circles.
-# every widget owns its own rect and knows how to draw itself. draw() takes
-# the mouse position so we can do hover effects without each widget asking
-# pygame for it separately
+# the ui widgets. pygame has no buttons or sliders so these are drawn out of
+# rectangles. i deliberately kept them plain - no rounded corners, no fills,
+# nothing that looks like a template
 
 import pygame
 
 
 
-def draw_panel(surface: pygame.Surface, rect: pygame.Rect, radius: int = 8) -> None:
-    # a panel with a thin border. borders make the biggest difference to
-    # how "finished" this looks, i use this everywhere
-    pygame.draw.rect(surface, PANEL, rect, border_radius=radius)
-    pygame.draw.rect(surface, PANEL_BORDER, rect, width=1, border_radius=radius)
+def draw_panel(surface: pygame.Surface, rect: pygame.Rect) -> None:
+    # a flat box with a 1px border. used for the header and the sidebar
+    pygame.draw.rect(surface, PANEL, rect)
+    pygame.draw.rect(surface, PANEL_BORDER, rect, width=1)
 
 
-def draw_tile(surface: pygame.Surface, rect: pygame.Rect, hover: bool = False,
-              color: tuple[int, int, int] = RAISED) -> None:
-    pygame.draw.rect(surface, RAISED_HOVER if hover else color, rect, border_radius=6)
+def hline(surface: pygame.Surface, x: int, y: int, width: int) -> None:
+    # the separator between sidebar sections
+    pygame.draw.line(surface, PANEL_BORDER, (x, y), (x + width, y), 1)
 
 
 class Label:
-    # a bit of text. rerendering every frame for 10 labels was a waste so
-    # it only re-renders when the string actually changes
-
-    def __init__(
-        self,
-        pos: tuple[int, int],
-        text: str,
-        font: pygame.font.Font,
-        color: tuple[int, int, int] = TEXT,
-        anchor: str = "midleft",
-    ) -> None:
+    # a bit of text. only re-renders when the string actually changes
+    def __init__(self, pos, text, font, color=TEXT, anchor="midleft") -> None:
         self.pos = pos
         self.font = font
         self.color = color
-        self.anchor = anchor  # any of pygames rect anchors, "midleft" etc
+        self.anchor = anchor
         self.text = text
         self.surface = font.render(text, True, color)
 
@@ -1260,16 +1235,8 @@ class Label:
 
 
 class Button:
-    # clicky label. active=True paints it filled in (used for Pause/Replay)
-
-    def __init__(
-        self,
-        rect: pygame.Rect | tuple[int, int, int, int],
-        label: str,
-        font: pygame.font.Font,
-        active: bool = False,
-        accent: tuple[int, int, int] = ACCENT,
-    ) -> None:
+    # text in a box. active just means the text goes accent coloured
+    def __init__(self, rect, label, font, active=False, accent=ACCENT) -> None:
         self.rect = pygame.Rect(rect)
         self.label = label
         self.font = font
@@ -1278,8 +1245,6 @@ class Button:
         self._pressed = False
 
     def handle(self, event: pygame.event.Event) -> bool:
-        # returns True on the click, this style of "press then release on
-        # the same rect" is what everyone expects from a button
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._pressed = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -1290,39 +1255,23 @@ class Button:
 
     def draw(self, surface: pygame.Surface, mouse: tuple[int, int] = (0, 0)) -> None:
         hovered = self.rect.collidepoint(mouse)
-        fill = self.accent if self.active else (
-            RAISED_HOVER if hovered else RAISED
-        )
-        border = self.accent if (self.active or hovered) else PANEL_BORDER
-        text_color = BG if self.active else TEXT
-        pygame.draw.rect(surface, fill, self.rect, border_radius=6)
-        pygame.draw.rect(surface, border, self.rect, width=1, border_radius=6)
-        text = self.font.render(self.label, True, text_color)
+        color = self.accent if (self.active or hovered) else TEXT_DIM
+        pygame.draw.rect(surface, PANEL_BORDER, self.rect, width=1)
+        text = self.font.render(self.label, True, color)
         surface.blit(text, text.get_rect(center=self.rect.center))
 
 
 class Slider:
-    # horizontal slider. the value snaps to `step`
-
-    def __init__(
-        self,
-        rect: pygame.Rect | tuple[int, int, int, int],
-        font: pygame.font.Font,
-        min_value: float,
-        max_value: float,
-        value: float,
-        step: float = 0.25,
-        accent: tuple[int, int, int] = ACCENT,
-        bipolar: bool = False,
-    ) -> None:
+    # a line with a knob on it. value snaps to step
+    def __init__(self, rect, font, min_value, max_value, value, step=0.25,
+                 accent=ACCENT, bipolar=False) -> None:
         self.rect = pygame.Rect(rect)
         self.font = font
         self.min = min_value
         self.max = max_value
         self.step = step
         self.accent = accent
-        # bipolar sliders (-1..+1) fill out from the middle instead of the
-        # left, otherwise "0" looks half full which is just wrong
+        # bipolar ones (-1..1) fill out from the middle so 0 looks empty
         self.bipolar = bipolar
         self._value = value
         self._drag = False
@@ -1338,14 +1287,11 @@ class Slider:
 
     @property
     def dragging(self) -> bool:
-        # while the user is holding the knob (replay uses this to stop
-        # auto-advancing under the cursor)
         return self._drag
 
     @property
     def track(self) -> pygame.Rect:
-        # the line is 4px high but the thing you can click is 12px, nobody
-        # can hit a 4px target
+        # the drawn line is thin, the clickable bit is not
         return self.rect.inflate(0, 12)
 
     def _set_from_x(self, x: int) -> None:
@@ -1355,6 +1301,9 @@ class Slider:
     def _knob_x(self) -> int:
         t = (self._value - self.min) / (self.max - self.min)
         return self.rect.left + round(t * self.rect.width)
+
+    def _origin_x(self) -> int:
+        return (self.rect.left + self.rect.width // 2) if self.bipolar else self.rect.left
 
     def handle(self, event: pygame.event.Event) -> None:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -1368,102 +1317,53 @@ class Slider:
 
     def draw(self, surface: pygame.Surface, mouse: tuple[int, int] = (0, 0)) -> None:
         y = self.rect.centery
-        hovered = self.track.collidepoint(mouse) or self._drag
-        pygame.draw.line(surface, METER_BG, (self.rect.left, y), (self.rect.right, y), 4)
+        pygame.draw.line(surface, METER_BG, (self.rect.left, y), (self.rect.right, y), 2)
         knob = self._knob_x()
         origin = self._origin_x()
         if knob != origin:
             lo, hi = min(knob, origin), max(knob, origin)
-            pygame.draw.line(surface, self.accent, (lo, y), (hi, y), 4)
-        if hovered:
-            pygame.draw.circle(surface, ACCENT_DIM, (knob, y), 9)
-        pygame.draw.circle(surface, self.accent, (knob, y), 6)
-        pygame.draw.circle(surface, BG, (knob, y), 2)
-
-    def _origin_x(self) -> int:
-        # where the coloured part starts from
-        return (self.rect.left + self.rect.width // 2) if self.bipolar else self.rect.left
+            pygame.draw.line(surface, self.accent, (lo, y), (hi, y), 2)
+        # square knob, it was a circle with a glow on it for a while and it
+        # looked like a phone settings screen
+        pygame.draw.rect(surface, self.accent, (knob - 3, y - 6, 6, 12))
 
 
 class Meter:
-    # label, bar, value. used for energy/age/readiness in the inspector
-
-    def __init__(self, font: pygame.font.Font, label_w: int = 34, value_w: int = 62) -> None:
+    # label, bar, value. energy / age / readiness in the inspector
+    def __init__(self, font, label_w=44, value_w=64) -> None:
         self.font = font
         self.label_w = label_w
         self.value_w = value_w
 
-    def draw(self, surface: pygame.Surface, rect: pygame.Rect, label: str,
-             fraction: float, text: str,
-             color: tuple[int, int, int] = ACCENT) -> None:
+    def draw(self, surface, rect, label, fraction, text, color=ACCENT) -> None:
         surface.blit(self.font.render(label, True, TEXT_DIM), (rect.left, rect.top))
-        bar = pygame.Rect(
-            rect.left + self.label_w, rect.top + 1,
-            max(8, rect.width - self.label_w - self.value_w), 8,
-        )
-        pygame.draw.rect(surface, METER_BG, bar, border_radius=4)
+        bar = pygame.Rect(rect.left + self.label_w, rect.top + 3,
+                          max(8, rect.width - self.label_w - self.value_w), 7)
+        pygame.draw.rect(surface, METER_BG, bar)
         frac = max(0.0, min(1.0, fraction))
         if frac > 0.0:
-            filled = pygame.Rect(bar.left, bar.top, max(2, round(bar.width * frac)), bar.height)
-            pygame.draw.rect(surface, color, filled, border_radius=4)
-        surface.blit(
-            self.font.render(text, True, TEXT),
-            (bar.right + 6, rect.top),
-        )
-
-
-def stat_tile(
-    surface: pygame.Surface,
-    rect: pygame.Rect,
-    value: str,
-    caption: str,
-    fonts,
-    color: tuple[int, int, int] = TEXT,
-) -> None:
-    # a big number with a small caption under it. the sidebar is made of
-    # these
-    draw_tile(surface, rect)
-    big = fonts.metric.render(value, True, color)
-    surface.blit(big, big.get_rect(midtop=(rect.centerx, rect.top + 4)))
-    cap = fonts.small.render(caption, True, TEXT_FAINT)
-    surface.blit(cap, cap.get_rect(midbottom=(rect.centerx, rect.bottom - 4)))
-
-
-def keycap(surface: pygame.Surface, pos: tuple[int, int], key: str, fonts,
-           text: str) -> int:
-    # draws a little keyboard key in a box next to some text, like
-    # [SPACE] pause. returns how wide it ended up so the caller can lay the
-    # next one out after it
-    rendered = fonts.keycap.render(key, True, TEXT_DIM)
-    box = pygame.Rect(pos[0], pos[1] - 7, rendered.get_width() + 8, 14)
-    pygame.draw.rect(surface, RAISED, box, border_radius=3)
-    pygame.draw.rect(surface, PANEL_BORDER, box, width=1, border_radius=3)
-    surface.blit(rendered, rendered.get_rect(center=box.center))
-    hint = fonts.small.render(text, True, TEXT_FAINT)
-    surface.blit(hint, hint.get_rect(midleft=(box.right + 5, pos[1])))
-    return box.width + 5 + hint.get_width()
+            pygame.draw.rect(surface, color,
+                             (bar.left, bar.top, max(2, round(bar.width * frac)), bar.height))
+        surface.blit(self.font.render(text, True, TEXT), (bar.right + 6, rect.top))
 
 
 # ===== ui/charts.py =====
-# the trends chart in the sidebar. population, food and mean aggression on
-# one plot because you want to read them against each other.
-# each line gets its own scale so this is about SHAPE not absolute numbers,
-# the legend at the bottom prints the actual values
+# the trends chart. population, food and mean aggression on one plot because
+# you want to read them against each other. each line has its own scale so
+# this is about the SHAPE, the current values are printed under it
 
 import pygame
 
 
-PAD = 6
-GRID_LINES = 3
-WINDOW = 300  # seconds shown. the sim keeps 600 but 5 min fits better
+PAD = 4
+WINDOW = 300  # seconds shown. the sim keeps 600 but 5 minutes fits better
 
-# the soft block under the population line. making a new surface every
-# frame was hammering the gc so we keep one around and wipe it instead
-_shade: pygame.Surface | None = None
+# the soft block under the population line. making a new surface every frame
+# was hammering the garbage collector so we keep one and wipe it
+_shade = None
 
 
-def _shade_for(size: tuple[int, int]) -> pygame.Surface:
-    # global, i know. it works and its one surface
+def _shade_for(size):
     global _shade
     if _shade is None or _shade.get_size() != size:
         _shade = pygame.Surface(size, pygame.SRCALPHA)
@@ -1471,84 +1371,68 @@ def _shade_for(size: tuple[int, int]) -> pygame.Surface:
     return _shade
 
 
-def draw_trends(
-    surface: pygame.Surface,
-    rect: pygame.Rect,
-    hist: list[Sample],
-    fonts,
-    config,
-) -> None:
-    # draw the whole thing, chart + legend, into rect
+def draw_trends(surface: pygame.Surface, rect: pygame.Rect, hist: list[Sample],
+                fonts, config) -> None:
     legend_h = fonts.small.get_height() + 2
     plot = pygame.Rect(rect.left, rect.top, rect.width, rect.height - legend_h)
-    pygame.draw.rect(surface, BG, plot, border_radius=4)
+    pygame.draw.rect(surface, BG, plot)
 
     if len(hist) < 2:
-        hint = fonts.small.render("collecting data…", True, TEXT_FAINT)
-        surface.blit(hint, hint.get_rect(center=plot.center))
+        text = fonts.tiny.render("waiting for data", True, TEXT_FAINT)
+        surface.blit(text, text.get_rect(center=plot.center))
     else:
         window = hist[-WINDOW:]
         n = len(window)
 
-        # grid lines. since every line is scaled differently these are the
-        # only way to judge how big a swing actually is
-        for i in range(1, GRID_LINES + 1):
-            y = plot.top + round(plot.height * i / (GRID_LINES + 1))
+        # a couple of faint lines across so you can judge how big a swing is
+        for i in (1, 2):
+            y = plot.top + round(plot.height * i / 3)
             pygame.draw.line(surface, PANEL_BORDER, (plot.left, y), (plot.right, y), 1)
 
-        def plot_line(values: list[float], scale: float,
-                      color: tuple[int, int, int], fill: bool = False) -> None:
-            # one line. scale is whatever that series tops out at
+        def line(values, scale, color, fill=False):
             if scale <= 0:
                 return
-            pts = [
-                (
-                    plot.left + round(i * (plot.width - 1) / max(1, n - 1)),
-                    plot.bottom - 1 - round(min(1.0, values[i] / scale) * (plot.height - 2)),
-                )
-                for i in range(n)
-            ]
+            pts = [(plot.left + round(i * (plot.width - 1) / max(1, n - 1)),
+                    plot.bottom - 1 - round(min(1.0, values[i] / scale) * (plot.height - 2)))
+                   for i in range(n)]
             if fill:
-                # translucent block from the line down to the bottom
                 shade = _shade_for(plot.size)
                 poly = [(p[0] - plot.left, p[1] - plot.top) for p in pts]
                 poly += [(poly[-1][0], plot.height), (poly[0][0], plot.height)]
-                pygame.draw.polygon(shade, (*color, 34), poly)
+                pygame.draw.polygon(shade, (*color, 40), poly)
                 surface.blit(shade, plot.topleft)
             pygame.draw.lines(surface, color, False, pts, 1)
 
-        plot_line([s.population for s in window],
-                  float(config.max_population) * 0.65, ACCENT, fill=True)
-        plot_line([s.food for s in window], float(config.max_food) * 0.65, FOOD)
-        plot_line([s.aggression for s in window], 1.0, PREDATOR)
+        line([s.population for s in window], config.max_population * 0.65,
+             ACCENT, fill=True)
+        line([s.food for s in window], config.max_food * 0.65, FOOD)
+        line([s.aggression for s in window], 1.0, PREDATOR)
 
-    # legend along the bottom: dot, name, current value
-    y = rect.bottom - legend_h // 2
-    x = rect.left + 2
-    latest = hist[-1] if hist else None
-    for label, value, color in (
-        ("pop", str(latest.population) if latest else "-", ACCENT),
-        ("food", str(latest.food) if latest else "-", FOOD),
-        ("agg", f"{latest.aggression * 100:.0f}%" if latest else "-", PREDATOR),
-    ):
-        pygame.draw.circle(surface, color, (x + 3, y - 1), 3)
-        text = fonts.small.render(f"{label} {value}", True, TEXT_DIM)
-        surface.blit(text, text.get_rect(midleft=(x + 10, y)))
-        x += 10 + text.get_width() + 12
+    # current values in their own colours, no dots or boxes
+    if not hist:
+        return
+    last = hist[-1]
+    y = rect.bottom - legend_h
+    x = rect.left
+    for text, color in ((f"pop {last.population}", ACCENT),
+                        (f"food {last.food}", FOOD),
+                        (f"agg {last.aggression * 100:.0f}%", PREDATOR)):
+        rendered = fonts.small.render(text, True, color)
+        surface.blit(rendered, (x, y))
+        x += rendered.get_width() + 12
 
 
 # ===== ui/inspector.py =====
-# the SELECTED panel. everything we know about the creature you clicked.
-# this is my favourite bit of the whole UI: the bars show the genome and
-# there is a little tick on each one showing where the POPULATION average
-# is, so you can tell at a glance if this one is fast for its time or not
+# the selected panel. shows whatever you clicked on.
+# the useful bit is the tick on each trait bar - it marks the population
+# average, so you can see if this one is fast for its time or not
 
 from typing import NamedTuple
 
 import pygame
 
 
-# Short display names for the genome traits.
+# short names for the traits, they have to fit next to a bar
 TRAIT_LABELS = {
     "speed": "spd",
     "size": "size",
@@ -1560,89 +1444,68 @@ TRAIT_LABELS = {
     "efficiency": "eff",
 }
 
-CHIP = 34  # the portrait box
-BAR_W = 54
+CHIP = 32   # the portrait box
+BAR_W = 52
 BAR_H = 5
 
 
 class Descent(NamedTuple):
-    # family info for the selected one
+    # family info for the selected creature
     line: int          # how many of its line are alive
-    descendants: int   # how many creatures came from this specific one
-    population: int    # so we can do the %
+    descendants: int   # how many came from this one specifically
+    population: int    # for the percentage
 
 
 class Inspector:
     def __init__(self, fonts) -> None:
         self.fonts = fonts
-        # the little portrait orb, cached (it only changes when the
-        # creature changes size/colour/brightness)
-        self.meter = Meter(fonts.small, label_w=30, value_w=66)
-        self._chip: pygame.Surface | None = None
-        self._chip_key: tuple | None = None
+        self._chip = None
+        self._chip_key = None
 
-    # drawing
+    def draw(self, surface: pygame.Surface, sidebar: pygame.Rect, top: int,
+             bottom: int, o: Organism | None, config, averages: dict[str, float],
+             descent: Descent | None) -> None:
+        f = self.fonts
+        pad = PANEL_PAD
+        x = sidebar.left + pad
+        width = sidebar.width - 2 * pad
+        y = top + pad
 
-    def draw(self, surface: pygame.Surface, rect: pygame.Rect, o: Organism | None,
-             config, averages: dict[str, float], descent: Descent | None) -> None:
-        draw_panel(surface, rect)
-        fonts = self.fonts
-        x = rect.left + PANEL_PAD
-        y = rect.top + PANEL_PAD
-        surface.blit(fonts.title.render("SELECTED", True, TEXT_DIM), (x, y))
-        y += fonts.title.get_height() + 6
+        surface.blit(f.head.render("selected", True, TEXT), (x, y))
+        y += f.head.get_height() + 6
 
         if o is None:
-            self._draw_empty(surface, rect, y)
+            surface.blit(f.small.render("click a creature", True, TEXT_DIM), (x, y))
+            surface.blit(f.small.render("to see its genome", True, TEXT_FAINT),
+                         (x, y + f.small.get_height() + 2))
             return
 
-        y = self._draw_identity(surface, x, y, o, config)
-        y = self._draw_meters(surface, rect, y, o, config)
-        self._draw_traits(surface, rect, y, o, averages)
-        self._draw_descent(surface, rect, o, descent)
+        y = self._identity(surface, x, y, o, config)
+        y = self._meters(surface, x, width, y, o, config)
+        self._traits(surface, x, width, y + 4, o, averages)
+        self._descent(surface, x, width, bottom, o, descent)
 
-    
-
-    def _draw_empty(self, surface: pygame.Surface, rect: pygame.Rect, y: int) -> None:
-        # nothing selected, just tell them what to do
-        fonts = self.fonts
-        lines = (
-            ("click a creature", TEXT_DIM),
-            ("its genome, energy and", TEXT_FAINT),
-            ("family line land here.", TEXT_FAINT),
-        )
-        for text, color in lines:
-            rendered = fonts.small.render(text, True, color)
-            surface.blit(rendered, (rect.left + PANEL_PAD, y))
-            y += fonts.small.get_height() + 1
-
-    def _draw_identity(self, surface: pygame.Surface, x: int, y: int,
-                       o: Organism, config) -> int:
-        # portrait + "#412 gen 7" + the role and family line
+    def _identity(self, surface, x, y, o: Organism, config) -> int:
+        # little square with the creature drawn in it, exactly like the plate
+        # draws it, so the thing in the panel is the thing you clicked
         chip = pygame.Rect(x, y, CHIP, CHIP)
-        pygame.draw.rect(surface, BG, chip, border_radius=6)
-        pygame.draw.rect(surface, PANEL_BORDER, chip, width=1, border_radius=6)
+        pygame.draw.rect(surface, BG, chip)
+        pygame.draw.rect(surface, PANEL_BORDER, chip, width=1)
         orb = self._portrait(o, config)
         surface.blit(orb, orb.get_rect(center=chip.center))
 
-        fonts = self.fonts
-        tx = chip.right + 10
+        f = self.fonts
+        tx = chip.right + 8
+        surface.blit(f.body.render(f"#{o.id}  gen {o.generation}", True, TEXT),
+                     (tx, y + 1))
         role = role_of(o.genome.aggression)
-        role_color = {
-            "predator": PREDATOR,
-            "mixed": FOOD,
-            "prey": ACCENT,
-        }[role]
-        surface.blit(fonts.body.render(f"#{o.id}   gen {o.generation}", True, TEXT),
-                     (tx, y + 2))
-        pygame.draw.circle(surface, role_color, (tx + 4, y + fonts.body.get_height() + 9), 3)
-        tag = fonts.small.render(f"{role}   line #{o.lineage}", True, role_color)
-        surface.blit(tag, (tx + 12, y + fonts.body.get_height() + 2))
+        color = {"predator": PREDATOR, "mixed": FOOD,
+                 "prey": ACCENT}[role]
+        surface.blit(f.small.render(f"{role}, line #{o.lineage}", True, color),
+                     (tx, y + f.body.get_height() + 2))
         return y + CHIP + 8
 
     def _portrait(self, o: Organism, config) -> pygame.Surface:
-        # draw the creature exactly like the plate does, so the dot in the
-        # panel is the same dot you clicked on
         radius = max(3, round(body_radius_px(o.genome.size)))
         level = energy_level(o.energy, config.max_energy)
         agg = aggression_bucket(o.genome.aggression)
@@ -1652,85 +1515,78 @@ class Inspector:
             self._chip_key = key
         return self._chip
 
-    def _draw_meters(self, surface: pygame.Surface, rect: pygame.Rect, y: int,
-                     o: Organism, config) -> int:
-        fonts = self.fonts
-        row = fonts.small.get_height() + 4
-        left = rect.left + PANEL_PAD
-        width = rect.width - 2 * PANEL_PAD
+    def _meters(self, surface, x, width, y, o: Organism, config) -> int:
+        row = self.fonts.small.get_height() + 5
         life = config.base_lifespan + o.genome.lifespan * config.lifespan_range
-
-        self.meter.draw(surface, pygame.Rect(left, y, width, row), "energy",
-                        o.energy / config.max_energy,
-                        f"{o.energy:3.0f}/{config.max_energy:.0f}")
-        y += row
         age_frac = o.age / life if life > 0 else 0.0
-        # Age is a countdown, so tint it as it runs out.
-        age_color = ACCENT if age_frac < 0.75 else FOOD
-        self.meter.draw(surface, pygame.Rect(left, y, width, row), "age",
-                        age_frac, f"{o.age:3.0f}/{life:3.0f}s", age_color)
-        y += row
-        self.meter.draw(surface, pygame.Rect(left, y, width, row), "ready",
-                        o.readiness, "yes" if o.readiness >= 1.0 else f"{o.readiness * 100:2.0f}%",
-                        PREDATOR if o.readiness >= 1.0 else ACCENT_DIM)
-        return y + row + 4
+        self.meter_row(surface, x, y, width, "energy", o.energy / config.max_energy,
+                       f"{o.energy:.0f}", ACCENT)
+        self.meter_row(surface, x, y + row, width, "age", age_frac,
+                       f"{o.age:.0f}s", ACCENT if age_frac < 0.75 else FOOD)
+        self.meter_row(surface, x, y + 2 * row, width, "ready", o.readiness,
+                       "yes" if o.readiness >= 1.0 else "no",
+                       PREDATOR if o.readiness >= 1.0 else TEXT_DIM)
+        return y + 3 * row
 
-    def _draw_traits(self, surface: pygame.Surface, rect: pygame.Rect, y: int,
-                     o: Organism, averages: dict[str, float]) -> None:
-        # 8 traits, 2 columns of 4. averages[] is the population mean so we
-        # can mark it on each bar
-        fonts = self.fonts
-        row = fonts.tiny.get_height() + 6
-        col_w = (rect.width - 2 * PANEL_PAD) // 2
-        names = list(TRAIT_NAMES)
-        for i, name in enumerate(names):
-            col, line = divmod(i, 4)
-            left = rect.left + PANEL_PAD + col * col_w
-            top = y + line * row
-            self._trait(surface, left, top, name, getattr(o.genome, name), averages.get(name, 0.0))
+    def meter_row(self, surface, x, y, width, label, frac, text, color) -> None:
+        f = self.fonts
+        surface.blit(f.small.render(label, True, TEXT_DIM), (x, y))
+        bar = pygame.Rect(x + 48, y + 3, width - 48 - 46, 7)
+        pygame.draw.rect(surface, METER_BG, bar)
+        frac = max(0.0, min(1.0, frac))
+        if frac > 0:
+            pygame.draw.rect(surface, color,
+                             (bar.left, bar.top, max(2, round(bar.width * frac)), bar.height))
+        surface.blit(f.small.render(text, True, TEXT), (bar.right + 6, y))
 
-    def _trait(self, surface: pygame.Surface, x: int, y: int, name: str,
-               value: float, average: float) -> None:
-        fonts = self.fonts
-        surface.blit(fonts.tiny.render(TRAIT_LABELS[name], True, TEXT_FAINT), (x, y))
-        bar = pygame.Rect(x + 30, y + 2, BAR_W, BAR_H)
-        pygame.draw.rect(surface, METER_BG, bar, border_radius=2)
-        fill = round(BAR_W * max(0.0, min(1.0, value)))
-        if fill:
+    def _traits(self, surface, x, width, y, o: Organism, averages: dict[str, float]) -> None:
+        # 8 traits, two columns. averages[] is the population mean
+        f = self.fonts
+        row = f.tiny.get_height() + 6
+        col = width // 2
+        for i, name in enumerate(TRAIT_NAMES):
+            cx = x + (i // 4) * col
+            cy = y + (i % 4) * row
+            self._trait(surface, cx, cy, name, getattr(o.genome, name),
+                        averages.get(name, 0.0))
+
+    def _trait(self, surface, x, y, name, value, average) -> None:
+        f = self.fonts
+        surface.blit(f.tiny.render(TRAIT_LABELS[name], True, TEXT_FAINT), (x, y))
+        bar = pygame.Rect(x + 28, y + 2, BAR_W, BAR_H)
+        pygame.draw.rect(surface, METER_BG, bar)
+        if value > 0:
             pygame.draw.rect(surface, ACCENT,
-                             pygame.Rect(bar.left, bar.top, fill, BAR_H), border_radius=2)
-        # the population average tick. this is the useful bit
-        tick = bar.left + round(BAR_W * max(0.0, min(1.0, average)))
-        pygame.draw.line(surface, TEXT_DIM, (tick, bar.top - 3), (tick, bar.bottom + 1), 1)
-        surface.blit(fonts.tiny.render(f"{value * 100:3.0f}", True, TEXT),
-                     (bar.right + 4, y))
+                             (bar.left, bar.top, max(1, round(BAR_W * min(1.0, value))), BAR_H))
+        # the population average as a tick across the bar
+        tick = bar.left + round(BAR_W * min(1.0, average))
+        pygame.draw.line(surface, TEXT, (tick, bar.top - 2), (tick, bar.bottom + 2), 1)
+        surface.blit(f.tiny.render(f"{value * 100:.0f}", True, TEXT), (bar.right + 5, y))
 
-    def _draw_descent(self, surface: pygame.Surface, rect: pygame.Rect,
-                      o: Organism, descent: Descent | None) -> None:
+    def _descent(self, surface, x, width, bottom, o: Organism,
+                 descent: Descent | None) -> None:
         if descent is None:
             return
-        fonts = self.fonts
-        y = rect.bottom - PANEL_PAD - fonts.small.get_height() * 2 - 2
+        f = self.fonts
         share = descent.line / descent.population * 100 if descent.population else 0.0
-        line = fonts.small.render(
-            f"line #{o.lineage}: {descent.line} alive ({share:.0f}% of plate)",
-            True, TEXT_DIM,
-        )
-        kids = fonts.small.render(
-            f"descendants of #{o.id}: {descent.descendants}", True, TEXT_DIM,
-        )
-        surface.blit(line, (rect.left + PANEL_PAD, y))
-        surface.blit(kids, (rect.left + PANEL_PAD, y + fonts.small.get_height() + 2))
+        # pinned to the bottom of the column so it doesnt move about as the
+        # trait block grows and shrinks
+        y = bottom - PANEL_PAD - f.small.get_height() * 2 - 2
+        surface.blit(f.small.render(f"line has {descent.line} alive ({share:.0f}%)",
+                                    True, TEXT_DIM), (x, y))
+        surface.blit(f.small.render(f"{descent.descendants} descended from this one",
+                                    True, TEXT_DIM), (x, y + f.small.get_height() + 2))
 
 
 # ===== ui/hud.py =====
-# the HUD. everything on screen that isnt the actual plate.
-# it does the layout, draws the panels and routes the mouse to the right
-# widget. when a button gets pressed it calls back into main.py, it doesnt
-# touch the world itself (apart from reading it to draw the numbers)
+# the HUD. everything on screen that isnt the plate. does the layout, draws
+# the panels and sends mouse events to the right widget. when a button gets
+# pressed it calls back into main.py, it doesnt touch the world itself apart
+# from reading it for the numbers
 #
-# layout is header on top, then a legend bar with the clock, then the plate
-# on the left and the sidebar panels stacked down the right hand side
+# header along the top, then a strip with the legend/clock/fps, then the
+# plate on the left and a column of text on the right
+
 import random  # not used any more, was for the old sparkline noise
 from collections import deque
 from typing import Callable, NamedTuple
@@ -1738,16 +1594,12 @@ from typing import Callable, NamedTuple
 import pygame
 
 
-HEIGHT = 860  # window height the layout is designed for
+HEIGHT = 860  # window height the layout was designed for
 WIDTH = 1280
-
-TILE_ROWS = 2
-TILE_COLS = 3
 
 
 class Replay(NamedTuple):
     # where we are in the recording while replaying
-
     index: int
     total: int
 
@@ -1764,51 +1616,46 @@ class Hud:
         self._on_seek = on_seek
         self._build_layout(size)
 
-        # the widgets in the header
         f = fonts
-        self.pause_btn = Button((0, 0, 78, 30), "Pause", f.button)
-        self.replay_btn = Button((0, 0, 78, 30), "Replay", f.button, accent=GOLD)
-        self.speed_slider = Slider((0, 0, 150, 16), f.small, 0.25, 20.0, 1.0)
-        self.mut_slider = Slider((0, 0, 110, 16), f.small, 0.001, 0.20, 0.05,
+        self.pause_btn = Button((0, 0, 74, 24), "pause", f.body)
+        self.replay_btn = Button((0, 0, 74, 24), "replay", f.body, accent=GOLD)
+        self.speed_slider = Slider((0, 0, 130, 12), f.small, 0.25, 20.0, 1.0)
+        self.mut_slider = Slider((0, 0, 100, 12), f.small, 0.001, 0.20, 0.05,
                                  step=0.001, accent=FOOD)
-        # The two environment dials: the world's food supply and the
-        # selection regime the lab imposes on aggression.
-        self.food_slider = Slider((0, 0, 110, 16), f.small, 0.1, 2.5, 1.0,
+        # the two world dials, food and the aggression pressure
+        self.food_slider = Slider((0, 0, 100, 12), f.small, 0.1, 2.5, 1.0,
                                   step=0.05, accent=FOOD)
-        self.pressure_slider = Slider((0, 0, 110, 16), f.small, -1.0, 1.0, 0.0,
+        self.pressure_slider = Slider((0, 0, 100, 12), f.small, -1.0, 1.0, 0.0,
                                       step=0.05, accent=PREDATOR, bipolar=True)
-        # Time-machine scrub bar (only drawn while replaying).
-        self.scrub = Slider((0, 0, 400, 14), f.small, 0, 239, 0, step=1, accent=GOLD)
+        self.scrub = Slider((0, 0, 400, 12), f.small, 0, 239, 0, step=1, accent=GOLD)
 
-        self.clock = Label((0, 0), "T+ 0:00", f.small, TEXT_DIM, anchor="midright")
-        self.fps = Label((0, 0), "60 fps", f.small, TEXT_FAINT, anchor="midright")
-        self.state = Label((0, 0), "", f.title, GOLD, anchor="midleft")
+        self.clock = Label((0, 0), "0:00", f.small, TEXT_DIM, anchor="midright")
+        self.fps = Label((0, 0), "", f.small, TEXT_FAINT, anchor="midright")
+        self.state = Label((0, 0), "", f.body, GOLD, anchor="midleft")
         self.replay_pos = Label((0, 0), "", f.small, TEXT, anchor="midright")
+
+        self.env_labels = []
         self._place_header_controls()
         self._place_readouts()
 
-        # the RECENT log
-        # (text, colour) pairs. kills go in the second they happen because
-        # theyre the interesting bit, but deaths get summed up once per
-        # second - a starvation crash would otherwise flood the whole panel
+        # the log. (text, colour) pairs. kills go in as they happen because
+        # theyre the interesting bit, deaths get added up once a second -
+        # a starvation crash would otherwise flood the whole thing
         self.log: deque[tuple[str, tuple[int, int, int]]] = deque(maxlen=40)
         self._pending: dict[str, int] = {}
         self._log_second = -1
         self._last_generation = 1
 
-        # these get recomputed once a second, not every frame. looping the
-        # population 60x a second for the trait averages was silly
+        # these get recomputed once a second, not every frame
         self._stat_second = -1
         self._averages: dict[str, float] = {}
         self._descent: Descent | None = None
 
-        self.meter = Meter(f.small, label_w=44, value_w=0)  # value_w 0 = no numbers
+        self.meter = Meter(f.small, label_w=46, value_w=62)
 
-    # working out where everything goes
+    # where everything goes
 
     def _build_layout(self, size: tuple[int, int]) -> None:
-        # work out where everything goes. panel heights come from the font
-        # metrics so nothing overlaps if the fonts change
         w, h = size
         m = MARGIN
         self.header = pygame.Rect(m, m, w - 2 * m, HEADER_H)
@@ -1820,91 +1667,72 @@ class Hud:
         self.plate = pygame.Rect(m, self.keybar.bottom + 4, plate_w,
                                  h - self.keybar.bottom - 4 - m)
 
-        # the sidebar, top to bottom
+        # section positions down the sidebar. heights come from the font
+        # metrics so nothing overlaps if the fonts change
         f = self.fonts
         pad = PANEL_PAD
-        tile_h = f.metric.get_height() + f.small.get_height() + 6
-        census_h = (2 * pad + f.title.get_height() + 6
-                    + TILE_ROWS * tile_h + (TILE_ROWS - 1) * 6
-                    + 8 + f.small.get_height() + 12)
-        trends_h = 2 * pad + f.title.get_height() + 6 + 100 + f.small.get_height() + 2
-        log_h = 2 * pad + f.title.get_height() + 6 + 6 * (f.small.get_height() + 2)
+        line = f.small.get_height() + 2
+        stats_h = pad + f.head.get_height() + 4 + 7 * line + 12
+        trends_h = pad + f.head.get_height() + 4 + 96 + line + pad
+        log_h = pad + f.head.get_height() + 4 + 6 * line + pad
 
         y = self.sidebar.top
-        self.census_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, census_h)
-        y = self.census_panel.bottom + GAP
-        self.trends_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, trends_h)
-        y = self.trends_panel.bottom + GAP
-        self.log_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width, log_h)
-        y = self.log_panel.bottom + GAP
-        self.inspector_panel = pygame.Rect(self.sidebar.left, y, self.sidebar.width,
-                                           self.sidebar.bottom - y)
+        self.census_top = y
+        y += stats_h
+        self.trends_top = y
+        y += trends_h
+        self.log_top = y
+        self.log_bottom = y + log_h
+        y += log_h
+        self.inspector_top = y + 4
         self.inspector = Inspector(self.fonts)
 
     def _place_header_controls(self) -> None:
-        # lay the toolbar out from the right edge backwards. two groups:
-        # the world dials (food, aggression) then a divider then the sim
-        # controls (speed, mutation) then the buttons. the divider is there
-        # so it reads as two different kinds of control
+        # laid out from the right edge backwards. world dials first, then a
+        # gap, then the sim controls, then the buttons
         f = self.fonts
         cy = self.header.centery
-        slider_y = cy - 6
-        value_gap, group_gap = 8, 18
-        value_w = 46
-        divider_gap = 13
+        slider_y = cy - 4
+        value_gap, group_gap = 6, 20
+        value_w = 44
 
         def group_width(slider: Slider) -> int:
             return slider.rect.width + value_gap + value_w
 
-        widths = [group_width(s) for s in
-                  (self.food_slider, self.pressure_slider, self.speed_slider,
-                   self.mut_slider)]
-        total = (sum(widths) + group_gap * 3 + 2 * divider_gap
-                 + 78 + 8 + 78)
-        x = self.header.right - 16 - total
+        widths = [group_width(s) for s in (self.food_slider, self.pressure_slider,
+                                           self.speed_slider, self.mut_slider)]
+        total = sum(widths) + group_gap * 3 + 20 + 74 + 8 + 74
+        x = self.header.right - 14 - total
 
-        self.env_labels = []
-        for label_text, slider, value_text, color in (
-            ("FOOD", self.food_slider, "1.00×", FOOD),
-            ("AGGRESSION", self.pressure_slider, "0.00", PREDATOR),
-        ):
-            self.env_labels.append(
-                (Label((x, cy - 14), label_text, f.tiny, TEXT_FAINT), slider,
-                 Label((x + slider.rect.width + value_gap, cy), value_text, f.small, color))
-            )
-            slider.rect.topleft = (x, slider_y)
+        for name, slider, accent in (("food", self.food_slider, FOOD),
+                                     ("aggression", self.pressure_slider, PREDATOR)):
+            label = Label((x, cy - 11), name, f.small, TEXT_DIM)
+            value = Label((x + slider.rect.width + value_gap, cy + 6), "", f.small, accent)
+            self.env_labels.append((label, slider, value))
+            slider.rect.topleft = (x, slider_y + 8)
             x += group_width(slider) + group_gap
 
-        self.divider_x = x - group_gap + divider_gap // 2
-        x += 2 * divider_gap - group_gap
+        x += 6
+        for name, slider in (("speed", self.speed_slider), ("mutation", self.mut_slider)):
+            label = Label((x, cy - 11), name, f.small, TEXT_DIM)
+            value = Label((x + slider.rect.width + value_gap, cy + 6), "", f.small, TEXT)
+            self.env_labels.append((label, slider, value))
+            slider.rect.topleft = (x, slider_y + 8)
+            x += group_width(slider) + group_gap
 
-        self.speed_label = Label((x, cy - 14), "SPEED", f.tiny, TEXT_FAINT)
-        self.speed_slider.rect.topleft = (x, slider_y)
-        self.speed_value = Label((x + self.speed_slider.rect.width + value_gap, cy),
-                                 "1.0x", f.small, TEXT)
-        x += group_width(self.speed_slider) + group_gap
-
-        self.mut_label = Label((x, cy - 14), "MUTATION", f.tiny, TEXT_FAINT)
-        self.mut_slider.rect.topleft = (x, slider_y)
-        self.mut_value = Label((x + self.mut_slider.rect.width + value_gap, cy),
-                               "5.0%", f.small, TEXT)
-        x += group_width(self.mut_slider) + group_gap
-
-        self.pause_btn.rect.topleft = (x, cy - 15)
-        self.replay_btn.rect.topleft = (self.pause_btn.rect.right + 8, cy - 15)
+        self.pause_btn.rect.topleft = (x, cy - 12)
+        self.replay_btn.rect.topleft = (self.pause_btn.rect.right + 8, cy - 12)
 
     def _place_readouts(self) -> None:
-        # the clock/fps in the legend bar and the replay scrub bar
-        self.clock.pos = (self.keybar.right - 8 - 74, self.keybar.centery)
-        self.fps.pos = (self.keybar.right - 8, self.keybar.centery)
-        self.state.pos = (self.plate.left + 12, self.plate.top + 14)
+        self.clock.pos = (self.keybar.right - 4, self.keybar.centery)
+        self.fps.pos = (self.keybar.right - 68, self.keybar.centery)
+        self.state.pos = (self.plate.left + 10, self.plate.top + 12)
 
-        # The scrub bar sits over the foot of the plate; its geometry is
-        # fixed by the layout, not by whether replay is currently on.
-        bar = pygame.Rect(self.plate.left, self.plate.bottom - 46, self.plate.width, 40)
-        pos_w = 78
-        self.scrub.rect = pygame.Rect(bar.left + 92, bar.centery - 7,
-                                      bar.width - 92 - pos_w - 16, 14)
+        # the scrub bar sits over the bottom of the plate. geometry is fixed
+        # by the layout, not by whether replay is on
+        bar = pygame.Rect(self.plate.left, self.plate.bottom - 44, self.plate.width, 36)
+        self.scrub.rect = pygame.Rect(bar.left + 80, bar.centery - 6,
+                                      bar.width - 80 - 90, 12)
 
     # slider values
 
@@ -1924,7 +1752,6 @@ class Hud:
     def pressure(self) -> float:
         return self.pressure_slider.value
 
-    # how long the recording is, so the scrub bar covers exactly it
     def set_replay_span(self, total: int) -> None:
         self.scrub.max = max(1, total - 1)
         self.scrub.value = 0
@@ -1934,8 +1761,8 @@ class Hud:
                 self.food_slider, self.pressure_slider, self.scrub)
 
     def chrome_at(self, pos: tuple[int, int], replaying: bool) -> bool:
-        # is this point on the UI rather than the plate. otherwise clicking
-        # a panel would also try to select whatever creature is underneath
+        # is this point on the ui rather than the plate. otherwise clicking a
+        # panel would also select whatever creature is underneath it
         if self.header.collidepoint(pos) or self.keybar.collidepoint(pos):
             return True
         if self.sidebar.collidepoint(pos):
@@ -1977,15 +1804,14 @@ class Hud:
             self._pending.clear()
             if parts:
                 stamp = f"{second // 60}:{second % 60:02d}"
-                self.log.append((f"{stamp}  " + " · ".join(parts), TEXT_FAINT))
+                self.log.append((f"{stamp}  " + ", ".join(parts), TEXT_FAINT))
         if max_generation > self._last_generation:
             self._last_generation = max_generation
-            self.log.append((f"generation {max_generation} reached", ACCENT))
+            self.log.append((f"generation {max_generation}", ACCENT))
 
-    # numbers that only need updating once a second
+    # a few numbers only need updating once a second
 
     def _refresh(self, world: Ecosystem, selected: Organism | None) -> None:
-        # once a second: population averages + the selected ones family
         second = int(world.time)
         if second == self._stat_second:
             return
@@ -2000,7 +1826,7 @@ class Hud:
             population=len(world.organisms),
         )
 
-    # panels
+    # drawing
 
     def draw(self, screen: pygame.Surface, world: Ecosystem, selected: Organism | None,
              kin: frozenset[int], paused: bool, replay: Replay | None,
@@ -2008,10 +1834,11 @@ class Hud:
         self._refresh(world, selected)
         self._draw_header(screen, paused, replay is not None, mouse)
         self._draw_keybar(screen, world, paused, replay, fps)
-        self._draw_census(screen, world)
+        self._draw_stats(screen, world)
         self._draw_trends(screen, world)
         self._draw_log(screen)
-        self.inspector.draw(screen, self.inspector_panel, selected, world.config,
+        self.inspector.draw(screen, self.sidebar, self.inspector_top,
+                            self.sidebar.bottom, selected, world.config,
                             self._averages, self._descent)
         if replay is not None:
             self._draw_scrub(screen, replay, mouse)
@@ -2022,190 +1849,126 @@ class Hud:
                      replaying: bool, mouse: tuple[int, int]) -> None:
         draw_panel(screen, self.header)
         f = self.fonts
-        x = self.header.left + 16
         logo = f.logo.render("EVOLAB", True, ACCENT)
-        screen.blit(logo, (x, self.header.top + 8))
-        tag = f.tagline.render("artificial life, running live", True, TEXT_FAINT)
-        screen.blit(tag, (x, self.header.top + 8 + logo.get_height() + 1))
+        screen.blit(logo, (self.header.left + 14, self.header.centery - logo.get_height() // 2))
 
-        self.pause_btn.label = "Resume" if paused else "Pause"
+        self.pause_btn.label = "resume" if paused else "pause"
         self.pause_btn.active = paused
         self.pause_btn.draw(screen, mouse)
-        self.replay_btn.label = "Live" if replaying else "Replay"
+        self.replay_btn.label = "live" if replaying else "replay"
         self.replay_btn.active = replaying
         self.replay_btn.draw(screen, mouse)
 
-        # Environment dials, then the hairline, then the sim controls.
-        for (label, slider, value), text in zip(
-            self.env_labels,
-            (f"{self.food_scale:.2f}×",
-             f"{self.pressure:+.2f}" if self.pressure else "0.00"),
-        ):
+        # the four sliders, each with its name above and value below
+        values = (f"{self.food_scale:.2f}x",
+                  f"{self.pressure:+.2f}",
+                  f"{self.speed:.2f}x",
+                  f"{self.mutation * 100:.1f}%")
+        for (label, slider, value), text in zip(self.env_labels, values):
             label.draw(screen)
             slider.draw(screen, mouse)
-            if value.text != text:
-                value.set_text(text)
+            value.set_text(text)
             value.draw(screen)
-        pygame.draw.line(
-            screen, PANEL_BORDER,
-            (self.divider_x, self.header.top + 12),
-            (self.divider_x, self.header.bottom - 12), 1,
-        )
-
-        self.speed_label.draw(screen)
-        self.speed_slider.draw(screen, mouse)
-        self.speed_value.set_text(f"{self.speed_slider.value:.2f}x")
-        self.speed_value.draw(screen)
-        self.mut_label.draw(screen)
-        self.mut_slider.draw(screen, mouse)
-        self.mut_value.set_text(f"{self.mut_slider.value * 100:.1f}%")
-        self.mut_value.draw(screen)
 
     def _draw_keybar(self, screen: pygame.Surface, world: Ecosystem, paused: bool,
                      replay: Replay | None, fps: float) -> None:
-        # the strip under the header: what all the colours mean + clock + fps
-        draw_panel(screen, self.keybar, radius=6)
+        # one line of text under the header saying what the colours mean
         f = self.fonts
-        x = self.keybar.left + 10
         y = self.keybar.centery
-        items = (
-            (ACCENT, "prey — forages plants", False),
-            (PREDATOR, "predator — hunts prey", False),
-            (FOOD, "food", False),
-            (TEXT, "ready to mate", True),
-            (ACCENT_DIM, "family line", True),
-        )
-        for color, text, hollow in items:
-            pygame.draw.circle(screen, color, (x + 3, y), 4 if hollow else 3,
-                               1 if hollow else 0)
-            label = f.small.render(text, True, TEXT_FAINT)
-            screen.blit(label, label.get_rect(midleft=(x + 10, y)))
-            x += 10 + label.get_width() + 14
+        text = "green eats plants    red hunts    amber is food    white ring = ready to breed"
+        screen.blit(f.small.render(text, True, TEXT_FAINT), (self.keybar.left + 2, y - 7))
 
         self.fps.set_text(f"{fps:.0f} fps")
         self.fps.draw(screen)
         seconds = int(world.time)
-        self.clock.set_text(f"T+ {seconds // 60}:{seconds % 60:02d}")
+        self.clock.set_text(f"{seconds // 60}:{seconds % 60:02d}")
         self.clock.draw(screen)
 
-        self.state.set_text(
-            "REPLAYING" if replay is not None else ("PAUSED" if paused else "")
-        )
-        if self.state.text:
+        if paused or replay is not None:
+            self.state.set_text("replay" if replay is not None else "paused")
             self.state.draw(screen)
 
-    def _draw_census(self, screen: pygame.Surface, world: Ecosystem) -> None:
-        # population / food / generation / births / starved / eaten tiles
-        draw_panel(screen, self.census_panel)
+    def _row(self, screen: pygame.Surface, x: int, y: int, width: int,
+             label: str, value: str, color=TEXT) -> None:
+        # label on the left, value on the right. cheaper than tiles
+        f = self.fonts
+        screen.blit(f.small.render(label, True, TEXT_DIM), (x, y))
+        rendered = f.small.render(value, True, color)
+        screen.blit(rendered, (x + width - rendered.get_width(), y))
+
+    def _draw_stats(self, screen: pygame.Surface, world: Ecosystem) -> None:
         f = self.fonts
         pad = PANEL_PAD
-        x0 = self.census_panel.left + pad
-        y = self.census_panel.top + pad
-        screen.blit(f.title.render("ECOSYSTEM", True, TEXT_DIM), (x0, y))
-        y += f.title.get_height() + 6
+        x = self.sidebar.left + pad
+        width = self.sidebar.width - 2 * pad
+        y = self.census_top + pad
+        screen.blit(f.head.render("stats", True, TEXT), (x, y))
+        y += f.head.get_height() + 4
 
         deaths = world.deaths
-        tiles = (
-            (str(len(world.organisms)), "population", ACCENT),
-            (str(len(world.food)), "food", FOOD),
-            (str(world.max_generation), "generation", TEXT),
-            (str(world.births), "births", TEXT),
-            (str(deaths["starvation"]), "starved", TEXT_FAINT),
-            (str(deaths["eaten"]), "eaten", PREDATOR),
-        )
-        tile_h = f.metric.get_height() + f.small.get_height() + 6
-        gap = 6
-        tile_w = (self.census_panel.width - 2 * pad - (TILE_COLS - 1) * gap) // TILE_COLS
-        for i, (value, caption, color) in enumerate(tiles):
-            row, col = divmod(i, TILE_COLS)
-            rect = pygame.Rect(x0 + col * (tile_w + gap), y + row * (tile_h + gap),
-                               tile_w, tile_h)
-            stat_tile(screen, rect, value, caption, f, color)
-        y += TILE_ROWS * tile_h + (TILE_ROWS - 1) * gap + 10
+        for label, value, color in (
+            ("population", str(len(world.organisms)), ACCENT),
+            ("food", str(len(world.food)), FOOD),
+            ("generation", str(world.max_generation), TEXT),
+            ("births", str(world.births), TEXT),
+            ("starved", str(deaths["starvation"]), TEXT_DIM),
+            ("eaten", str(deaths["eaten"]), PREDATOR),
+        ):
+            self._row(screen, x, y, width, label, value, color)
+            y += f.small.get_height() + 2
 
-        # the diet bar. prey green, mixed amber, predators red
         prey, mixed, pred = world.role_counts()
-        total = max(1, prey + mixed + pred)
-        bar = pygame.Rect(x0, y + f.small.get_height() + 2,
-                          self.census_panel.width - 2 * pad, 8)
-        pygame.draw.rect(screen, METER_BG, bar, border_radius=4)
-        x = bar.left
-        for count, color in ((prey, ACCENT), (mixed, FOOD), (pred, PREDATOR)):
-            width = round(bar.width * count / total)
-            if width:
-                pygame.draw.rect(screen, color, (x, bar.top, width, bar.height))
-            x += width
-        screen.blit(
-            f.small.render(
-                f"{prey} prey · {mixed} mixed · {pred} predators", True, TEXT_DIM),
-            (x0, y),
-        )
+        y += 6
+        self._row(screen, x, y, width, "prey / mixed / hunters",
+                  f"{prey} / {mixed} / {pred}")
+        hline(screen, x, y + f.small.get_height() + 4, width)
 
     def _draw_trends(self, screen: pygame.Surface, world: Ecosystem) -> None:
-        draw_panel(screen, self.trends_panel)
         f = self.fonts
         pad = PANEL_PAD
-        x0 = self.trends_panel.left + pad
-        y = self.trends_panel.top + pad
-        screen.blit(f.title.render("TRENDS  ·  last 5 min", True, TEXT_DIM), (x0, y))
-        y += f.title.get_height() + 6
-        draw_trends(
-            screen,
-            pygame.Rect(x0, y, self.trends_panel.width - 2 * pad,
-                        self.trends_panel.bottom - pad - y),
-            world.history, f, world.config,
-        )
+        x = self.sidebar.left + pad
+        width = self.sidebar.width - 2 * pad
+        y = self.trends_top + pad
+        screen.blit(f.head.render("last 5 minutes", True, TEXT), (x, y))
+        y += f.head.get_height() + 4
+        chart = pygame.Rect(x, y, width, 96)
+        draw_trends(screen, chart, world.history, f, world.config)
 
     def _draw_log(self, screen: pygame.Surface) -> None:
-        # newest line at the top, however many fit in the panel
-        draw_panel(screen, self.log_panel)
         f = self.fonts
         pad = PANEL_PAD
-        x0 = self.log_panel.left + pad
-        y = self.log_panel.top + pad
-        screen.blit(f.title.render("RECENT", True, TEXT_DIM), (x0, y))
-        y += f.title.get_height() + 6
-        line_h = f.small.get_height() + 2
-        room = max(0, (self.log_panel.bottom - pad - y) // line_h)
+        x = self.sidebar.left + pad
+        width = self.sidebar.width - 2 * pad
+        y = self.log_top + pad
+        screen.blit(f.head.render("recent", True, TEXT), (x, y))
+        y += f.head.get_height() + 4
+        line = f.small.get_height() + 2
+        room = max(0, (self.log_bottom - pad - y) // line)
         for text, color in list(self.log)[-room:][::-1]:
-            screen.blit(f.small.render(text, True, color), (x0, y))
-            y += line_h
+            screen.blit(f.small.render(text, True, color), (x, y))
+            y += line
+        hline(screen, x, self.inspector_top - 4, width)
 
     def _draw_scrub(self, screen: pygame.Surface, replay: Replay,
                     mouse: tuple[int, int]) -> None:
-        # the replay bar. it sits over the bottom of the plate like a video
-        # player timeline. TODO clicking the plate under it is blocked while
-        # replaying, which is fine for now
-        bar = pygame.Rect(self.plate.left, self.plate.bottom - 46, self.plate.width, 40)
-        pygame.draw.rect(screen, PANEL, bar, border_radius=6)
-        pygame.draw.rect(screen, GOLD, bar, width=1, border_radius=6)
-
+        # the replay bar, sits over the bottom of the plate
+        bar = pygame.Rect(self.plate.left, self.plate.bottom - 44, self.plate.width, 36)
+        pygame.draw.rect(screen, PANEL, bar)
+        pygame.draw.rect(screen, GOLD, bar, width=1)
         f = self.fonts
-        pygame.draw.circle(screen, GOLD, (bar.left + 18, bar.centery), 4)
-        tag = f.title.render("REPLAY", True, GOLD)
-        screen.blit(tag, tag.get_rect(midleft=(bar.left + 28, bar.centery)))
-
+        screen.blit(f.small.render("replay", True, GOLD), (bar.left + 10, bar.centery - 7))
         self.scrub.draw(screen, mouse)
-        self.replay_pos.pos = (bar.right - 12, bar.centery)
+        self.replay_pos.pos = (bar.right - 10, bar.centery)
         self.replay_pos.set_text(f"{replay.index + 1} / {replay.total}")
         self.replay_pos.draw(screen)
 
     def _draw_hints(self, screen: pygame.Surface) -> None:
-        # little key hints in the corner of the plate
+        # plain text in the corner of the plate, no boxes
         f = self.fonts
-        hints = (("SPACE", "pause"), ("R", "replay"), ("click", "inspect a creature"))
-        width = sum(
-            f.keycap.size(key)[0] + 8 + 5 + f.small.size(text)[0] + 16
-            for key, text in hints
-        )
-        panel = pygame.Rect(self.plate.left + 8,
-                            self.plate.bottom - 8 - f.small.get_height() - 14,
-                            width + 4, f.small.get_height() + 14)
-        pygame.draw.rect(screen, PANEL, panel, border_radius=6)
-        pygame.draw.rect(screen, PANEL_BORDER, panel, width=1, border_radius=6)
-        x = panel.left + 8
-        for key, text in hints:
-            x += keycap(screen, (x, panel.centery), key, f, text) + 16
+        text = "space pause,  r replay,  click a creature"
+        surface = f.small.render(text, True, TEXT_FAINT)
+        screen.blit(surface, (self.plate.left + 10,
+                              self.plate.bottom - surface.get_height() - 8))
 
 
 # ===== rendering/renderer.py =====
