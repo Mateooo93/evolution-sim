@@ -46,7 +46,7 @@ class Inspector:
         self._chip: pygame.Surface | None = None
         self._chip_key: tuple | None = None
 
-    # --- public API -------------------------------------------------------
+    # drawing
 
     def draw(self, surface: pygame.Surface, rect: pygame.Rect, o: Organism | None,
              config, averages: dict[str, float], descent: Descent | None) -> None:
@@ -66,7 +66,7 @@ class Inspector:
         self._draw_traits(surface, rect, y, o, averages)
         self._draw_descent(surface, rect, o, descent)
 
-    # --- sections ---------------------------------------------------------
+    
 
     def _draw_empty(self, surface: pygame.Surface, rect: pygame.Rect, y: int) -> None:
         # nothing selected, just tell them what to do

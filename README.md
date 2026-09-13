@@ -1,159 +1,118 @@
-# EvoLab
+EvoLab
+======
 
-EvoLab is a small artificial life simulator written in Python. Organisms move
-around a 2D world, eat food, hunt each other, and breed. Each one has 8 traits
-that get passed to its children with random changes, so the population slowly
-changes over time while you watch.
+EvoLab is a small artificial life simulator I made in Python with pygame. It
+puts a few hundred organisms on a 2D world and lets them get on with it. They
+walk around, eat food, run away from each other, hunt each other, and breed.
+Every organism has 8 traits and passes them to its kids with small random
+changes, so over a few minutes the population changes on its own and you can
+watch that happen.
 
-## What happens in it
+To run it you need Python 3 and pygame. Make a virtual environment, install the
+requirements, then start it:
 
-- Organisms need energy to live. Moving, having a big body, and having high
-  metabolism all cost energy. If energy hits 0 they starve.
-- They also age. Past a certain age (depends on the lifespan trait) they die.
-- Food spawns in patches. Hungry organisms look for the closest food they can
-  see and walk to it.
-- Aggressive organisms hunt other organisms instead. They chase them, and if
-  the prey is slower it gets caught. If the prey is faster it gets away.
-- Two adults that are ready and have enough energy produce one baby. The baby's
-  traits come from both parents, then each trait has a small chance to change
-  a bit (mutation).
+    python3 -m venv .venv
+    .venv/bin/python -m ensurepip --upgrade
+    .venv/bin/python -m pip install -r requirements.txt
+    .venv/bin/python main.py
 
-## Run it
+If ensurepip fails you are missing the venv package, so run "sudo apt install
+python3-venv python3-pip" first.
 
-```bash
-python3 -m venv .venv
-.venv/bin/python -m ensurepip --upgrade
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python main.py
-```
+The controls are space to pause, R to open the replay of the last minute, the
+left and right arrow keys to step through it, escape to close it, and clicking
+on a creature selects it and shows its stats in the side panel. Clicking empty
+space unselects it.
 
-If `ensurepip` fails, install `python3-venv` and `python3-pip` first:
+In the header there are four sliders. FOOD changes how fast food spawns, from
+0.1x up to 2.5x, so you can starve the world or make it boom. AGGRESSION goes
+from -1 to 1 and pushes new babies toward hunting or toward eating plants. It
+does not force anything, it just makes one direction more likely, so if the
+world can't feed hunters they still die out. SPEED is how many simulation steps
+run per second and goes up to 20x, and MUTATION is the chance that a baby's
+trait changes a bit, from 0.1% to 20%.
 
-```bash
-sudo apt install -y python3-venv python3-pip
-```
+The dots on the plate tell you what is going on without clicking anything. The
+size of a dot is its size trait, how bright it is is its energy so a dim one is
+nearly starving, the little line sticking out shows which way it is facing and
+how fast it is, and the colour is aggression, green for a plant eater and red
+for a hunter. A thin ring means it is ready to breed. The fading line behind it
+is where it has been, and since that is tinted the same way you can see a hunt
+as a red tail chasing a green one. When you select something it gets a white
+ring and corner brackets, and every living member of its family line gets a dim
+green ring, which is how you find out whether a family is taking over the plate
+or dying out.
 
-## Controls
+The side panel has four parts. The first one shows the population, how much
+food is on the plate, the deepest generation, births and deaths, and a bar
+splitting the population into plant eaters, mixed and hunters. The second is a
+chart of population, food and mean aggression over the last five minutes, with
+each line scaled to its own range so you are looking at the shape rather than
+the numbers, and the current values printed underneath it. The third is a log:
+kills appear as they happen and everything else is added up once per second. The
+fourth is the creature you selected. It shows it drawn the same way the plate
+draws it, its role, its family line, how many living descendants it has, meters
+for energy, age and how ready it is to breed, and all 8 traits as bars. Each bar
+has a tick on it showing the population average, so you can tell if that
+creature is fast for its time or not.
 
-| Key / click | What it does |
-| --- | --- |
-| `Space` | pause and unpause |
-| `R` | open the replay of the last minute, or close it |
-| `←` `→` | move one frame while replaying |
-| `Esc` | close the replay |
-| click a creature | select it and show its stats in the side panel |
-| click empty space | unselect |
+The world itself is in simulation/ and has no pygame in it at all, so it can
+run without a window. genome.py has the 8 traits and the code that turns them
+into real numbers like speed in pixels per second. ecosystem.py has the rules,
+which is energy, sensing, hunting, breeding and food. spatial.py is a grid so
+that finding nearby creatures does not mean checking all of them, and there is
+a second grid just for food. snapshot.py makes copies of the world for the
+replay, and types.py has the Organism and Event classes. rendering/ draws the
+world and ui/ has the panels, buttons, sliders and the chart. main.py sets up
+the window and owns the clock and the replay.
 
-## The header controls
+Energy is the main thing in the simulation, and it costs this much per second:
 
-| Control | Range | What it does |
-| --- | --- | --- |
-| FOOD | 0.1x to 2.5x | changes how fast food spawns. Low makes a famine, high makes a boom |
-| AGGRESSION | -1 to 1 | pushes new babies toward hunting (positive) or eating plants (negative). 0 leaves it alone |
-| SPEED | 0.25x to 20x | how many simulation steps run per real second |
-| MUTATION | 0.1% to 20% | chance per trait that a baby's trait changes a bit |
+    drain = (0.22 + 0.40 * metabolism) * (1 + 0.9 * speed + 0.8 * size)
+            * (1 - 0.5 * efficiency) * (1 + 0.3 * aggression)
 
-The aggression slider does not force anything. It just makes it more likely
-that babies go one way. If the world can't support hunters, they still die out.
+Some rules matter more than the exact numbers. Food arrives in patches of 10
+items, at 9 items a second by default. To chase something you need to be about
+5% faster than it, and you can only sprint if you have more than 25% of your
+energy left, so a hunt usually ends when the one being chased runs out of
+energy. You only run away from something if it is close and faster than you,
+because otherwise running just wastes energy. Hunters get less energy out of
+plants, which is why most of the population stays plant eaters. If the
+population somehow drops below 28, random new organisms start coming in slowly,
+but that almost never happens once breeding is working. On the normal settings
+the population settles somewhere around 180 to 240 and goes up and down on its
+own, and most organisms do not become full hunters, they stay in the middle.
 
-## What the dots on the plate mean
+There is also a browser version in web/ which runs the same Python with
+PyScript, so it needs no server and no install, but the first load takes a few
+seconds while it downloads everything. To try it locally, serve the folder and
+open it:
 
-| Looking at | Means |
-| --- | --- |
-| size of the dot | size trait |
-| how bright it is | energy. Dim means nearly starving |
-| length of the line sticking out | speed trait |
-| colour | aggression. Green is a plant eater, red is a hunter |
-| thin ring around it | it is ready to breed |
-| the fading line behind it | where it has been |
-| white ring and corners | the creature you selected |
-| green rings | the selected creature's family |
+    cd web
+    python3 -m http.server 8000
 
-## Play it in the browser
+web/evolab.py is not written by hand, it is built from the other files, so run
+the builder after changing anything:
 
-There is a browser version in `web/`. It runs Python with PyScript, so there is
-no server and no install. The first load takes a few seconds.
+    .venv/bin/python web/build.py
 
-```bash
-cd web
-python3 -m http.server 8000
-# then open http://localhost:8000
-```
+The builder checks that every module it needs is in its list, because if one is
+missing the game runs fine until it hits the code path that uses it and then
+dies in the browser with nothing on screen to tell you why. The live version is
+on the gh-pages branch, and you update it by pushing the web folder to that
+branch with "git subtree push --prefix web origin gh-pages". Not every machine
+has git subtree, so if yours doesn't, clone the branch somewhere and copy
+index.html and evolab.py into it, then commit and push.
 
-`web/evolab.py` is built from the other files, so run the builder after you
-change anything:
+There are a few flags for running it without a monitor, which is how I test it:
 
-```bash
-.venv/bin/python web/build.py
-```
+    SDL_VIDEODRIVER=dummy .venv/bin/python main.py --frames 420 --seed 5 --shot frame.png
 
-The live version is on the `gh-pages` branch. To update it, push the `web`
-folder to that branch:
+--frames N quits after N frames, --seed N makes the world start the same way
+every time, and --shot saves the last frame as an image so you can look at it
+afterwards.
 
-```bash
-git subtree push --prefix web origin gh-pages
-```
-
-`git subtree` is not installed on every machine. If it is missing, clone the
-branch somewhere and copy the two web files in by hand:
-
-```bash
-git clone -b gh-pages https://github.com/YOURNAME/evolution-sim.git site
-cp web/index.html web/evolab.py site/
-cd site && git add -A && git commit -m "update site" && git push
-```
-
-## Files
-
-- `simulation/` - the world. No pygame in here, so it can run without a window.
-  - `genome.py` - the 8 traits and how they turn into real numbers like speed
-  - `ecosystem.py` - the rules: energy, sensing, hunting, breeding, food
-  - `spatial.py` - a grid so looking for nearby creatures is fast
-  - `snapshot.py` - copies of the world used by the replay
-  - `types.py` - the Organism and Event data classes
-- `rendering/` - draws the world onto a surface
-- `ui/` - the panels, buttons, sliders and the chart
-- `main.py` - sets up the window, owns the clock and the replay
-- `devlog/` - notes I wrote while making it
-
-## Numbers used in the simulation
-
-Energy cost per second:
-
-```
-drain = (0.22 + 0.40 * metabolism) * (1 + 0.9 * speed + 0.8 * size)
-        * (1 - 0.5 * efficiency) * (1 + 0.3 * aggression)
-```
-
-A few rules that matter more than the exact numbers:
-
-- Food comes in patches of 10 items, at 9 items per second by default.
-- You need to be about 5% faster than someone to chase them, and you can only
-  sprint if you have more than 25% of your energy left. So a hunt usually ends
-  when the one being chased runs out of energy.
-- You only run away from something if it is close and faster than you.
-- Hunters get less energy from plants, which is why most of the population
-  still eats plants.
-- If the population drops below 28, random new organisms come in slowly. This
-  almost never happens once breeding is working.
-
-On the default settings the population sits around 180 to 240 and goes up and
-down on its own. Most organisms do not turn into full hunters, they stay in the
-middle.
-
-## Dev flags
-
-```bash
-SDL_VIDEODRIVER=dummy .venv/bin/python main.py --frames 420 --seed 5 --shot frame.png
-```
-
-- `--frames N` quits after N frames
-- `--seed N` makes the world start the same way every run
-- `--shot PATH` saves the last frame as an image
-
-## Devlogs
-
-`devlog/` has 8 short notes in order, from the first version up to the final
-one. The last one covers the interface work and the changes I made to the
-ecology after running the simulation without a window and finding out the
-population was only surviving because of the random immigrants.
+devlog/ has 8 short notes in order from the first version up to the last one.
+The last one covers the interface work and the changes I made to the ecology
+after running the simulation without a window and finding out that most of the
+population was only alive because of the random immigrants coming in.

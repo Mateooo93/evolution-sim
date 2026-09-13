@@ -46,7 +46,7 @@ class WorldConfig:
     organisms: int  # starting organism count
     wander_turn_rate: float  # how eagerly a creature changes direction (rad/s)
 
-    # --- energy ---------------------------------------------------------
+    # energy
     max_energy: float = 100.0
     # drain per second = metabolism stuff * body upkeep * efficiency * aggression
     base_metabolism: float = 0.22
@@ -55,11 +55,11 @@ class WorldConfig:
     size_cost: float = 0.8
     efficiency_saving: float = 0.5
 
-    # --- life -----------------------------------------------------------
+    # life
     base_lifespan: float = 120.0  # seconds when the trait is 0
     lifespan_range: float = 480.0  # so max age is between 2 and 10 minutes
 
-    # --- food -----------------------------------------------------------
+    # food
     # food comes in little patches (meadows) instead of evenly sprinkled
     # dots. with even food, whoever was fastest won literally every race
     # and after 10 minutes the whole plate was at max speed, which meant
@@ -72,14 +72,14 @@ class WorldConfig:
     food_energy: float = 12.0  # small meals, lots of them
     initial_food_fraction: float = 0.35  # some at t=0 so it doesnt start dead
 
-    # --- senses ---------------------------------------------------------
+    # senses
     vision_base: float = 30.0
     vision_range: float = 120.0  # so 30..150px depending on the trait
     sense_interval: float = 0.25  # dont rescan every frame, too slow
     hungry_level: float = 0.80  # under 80% energy it goes looking
     steer_rate: float = 6.0  # rad/s. big creatures turn slower
 
-    # --- reproduction ---------------------------------------------------
+    # reproduction
     mate_radius: float = 30.0
     mate_energy_gate: float = 50.0
     mate_cost: float = 18.0  # each parent pays this
@@ -91,13 +91,13 @@ class WorldConfig:
     # tried 1.5 here once, plate went extinct in 4 minutes. keep it at 0.8
     max_population: int = 400  # safety valve
     mutation_rate: float = 0.05  # the MUTATION slider writes into this
-    # --- immigration ----------------------------------------------------
+    # immigration
     # if everything dies we trickle in random strangers so the sim is never
     # just an empty plate. barely ever fires now that breeding works
     min_population: int = 28
     migration_rate: float = 0.15
 
-    # --- predation ------------------------------------------------------
+    # predation
     # aggression is a 0..1 thing: hungry + a dice roll under aggression =
     # go hunting, otherwise go eat plants. important bit: the cost is on
     # the CHASE, not on carrying the gene. the early version taxed the
@@ -181,7 +181,7 @@ class Ecosystem:
             self._spawn_patch()
         self.food_grid.rebuild(self.food)
 
-    # --- events -----------------------------------------------------------
+    # events
 
     def _emit(self, kind: str, x: float, y: float, actor: int, other: int = 0) -> None:
         self.events.append(Event(self.time, kind, x, y, actor, other))
@@ -194,7 +194,7 @@ class Ecosystem:
         self.events.clear()
         return out
 
-    # --- population -----------------------------------------------------
+    # population
 
     def _spawn(self, founder: bool = False) -> None:
         # one new creature: the starting 90 at t=0, or an immigrant later.
@@ -232,7 +232,7 @@ class Ecosystem:
             kind = {"starvation": "starved", "age": "aged"}.get(cause, cause)
             self._emit(kind, o.x, o.y, o.id, by)
 
-    # --- food -------------------------------------------------------------
+    # food
 
     def _spawn_food(self, x: float | None = None, y: float | None = None) -> None:
         c = self.config
@@ -279,7 +279,7 @@ class Ecosystem:
             self._food_acc -= 1.0
             self._spawn_patch()
 
-    # --- sensing -----------------------------------------------------------
+    # sensing
 
     def _vision_range(self, o: Organism) -> float:
         c = self.config
@@ -495,7 +495,7 @@ class Ecosystem:
             self._eat_food(f, o)
             o.target = None
 
-    # --- behaviour ------------------------------------------------------
+    # behaviour
 
     def update(self, dt: float) -> None:
         # advance the world by dt seconds. this is the whole simulation
@@ -604,7 +604,7 @@ class Ecosystem:
         turn = c.steer_rate * (1.0 - 0.5 * o.genome.size)
         o.heading += max(-turn * dt, min(turn * dt, diff))
 
-    # --- reproduction -----------------------------------------------------
+    # reproduction
 
     def _mate(self) -> None:
         # breeding. both parents have to be ready + have the energy, both
@@ -688,7 +688,7 @@ class Ecosystem:
                 return p
         return None
 
-    # --- trait costs -----------------------------------------------------
+    # trait costs
 
     def _drain(self, g: Genome) -> float:
         # energy per second. this formula is the whole game really, every
@@ -704,7 +704,7 @@ class Ecosystem:
         c = self.config
         return c.base_lifespan + g.lifespan * c.lifespan_range
 
-    # --- observations ----------------------------------------------------
+    # observations
 
     def trait_average(self, trait: str) -> float:
         # population mean of one trait. used by the chart + the inspector
@@ -771,7 +771,7 @@ class Ecosystem:
                 best_d = d2
         return best
 
-    # --- helpers ----------------------------------------------------------
+    # helpers
 
     def _migrate(self, dt: float) -> None:
         c = self.config

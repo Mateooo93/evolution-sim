@@ -3,11 +3,8 @@
 # widget. when a button gets pressed it calls back into main.py, it doesnt
 # touch the world itself (apart from reading it to draw the numbers)
 #
-#   +----------------- header: logo + the dials + buttons -------------+
-#   +--- legend bar ---- clock -- fps ---------------------------------+
-#   |  +-------- plate --------+  +--- sidebar: census / trends / ----+
-#   |  |                        |  |     recent / selected ----------+|
-#
+# layout is header on top, then a legend bar with the clock, then the plate
+# on the left and the sidebar panels stacked down the right hand side
 import random  # not used any more, was for the old sparkline noise
 from collections import deque
 from typing import Callable, NamedTuple
@@ -57,7 +54,7 @@ class Hud:
         self._on_seek = on_seek
         self._build_layout(size)
 
-        # --- header controls ------------------------------------------
+        # the widgets in the header
         f = fonts
         self.pause_btn = Button((0, 0, 78, 30), "Pause", f.button)
         self.replay_btn = Button((0, 0, 78, 30), "Replay", f.button, accent=theme.GOLD)
@@ -80,7 +77,7 @@ class Hud:
         self._place_header_controls()
         self._place_readouts()
 
-        # --- the RECENT log ---------------------------------------------
+        # the RECENT log
         # (text, colour) pairs. kills go in the second they happen because
         # theyre the interesting bit, but deaths get summed up once per
         # second - a starvation crash would otherwise flood the whole panel
@@ -97,7 +94,7 @@ class Hud:
 
         self.meter = Meter(f.small, label_w=44, value_w=0)  # value_w 0 = no numbers
 
-    # --- layout -----------------------------------------------------------
+    # working out where everything goes
 
     def _build_layout(self, size: tuple[int, int]) -> None:
         # work out where everything goes. panel heights come from the font
@@ -199,7 +196,7 @@ class Hud:
         self.scrub.rect = pygame.Rect(bar.left + 92, bar.centery - 7,
                                       bar.width - 92 - pos_w - 16, 14)
 
-    # --- properties -------------------------------------------------------
+    # slider values
 
     @property
     def speed(self) -> float:
@@ -237,7 +234,7 @@ class Hud:
             return True
         return any(w.rect.collidepoint(pos) for w in self.widgets())
 
-    # --- input ------------------------------------------------------------
+    # mouse and keyboard
 
     def handle(self, event: pygame.event.Event, replaying: bool) -> None:
         if self.pause_btn.handle(event):
@@ -253,7 +250,7 @@ class Hud:
             if self.scrub.dragging:
                 self._on_seek(int(self.scrub.value))
 
-    # --- event log --------------------------------------------------------
+    # the log
 
     def consume(self, events: list[Event], world_time: float,
                 max_generation: int) -> None:
@@ -275,7 +272,7 @@ class Hud:
             self._last_generation = max_generation
             self.log.append((f"generation {max_generation} reached", theme.ACCENT))
 
-    # --- per-second population views --------------------------------------
+    # numbers that only need updating once a second
 
     def _refresh(self, world: Ecosystem, selected: Organism | None) -> None:
         # once a second: population averages + the selected ones family
@@ -293,7 +290,7 @@ class Hud:
             population=len(world.organisms),
         )
 
-    # --- drawing ----------------------------------------------------------
+    # panels
 
     def draw(self, screen: pygame.Surface, world: Ecosystem, selected: Organism | None,
              kin: frozenset[int], paused: bool, replay: Replay | None,

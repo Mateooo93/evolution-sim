@@ -9,6 +9,7 @@
 #
 # yes the order of MODULES matters, ask me how i know
 
+import ast
 import re
 from pathlib import Path
 
@@ -22,6 +23,7 @@ MODULES = [
     ("simulation.food", "simulation/food.py"),
     ("simulation.types", "simulation/types.py"),
     ("simulation.spatial", "simulation/spatial.py"),
+    ("simulation.snapshot", "simulation/snapshot.py"),
     ("simulation.ecosystem", "simulation/ecosystem.py"),
     ("rendering.orbs", "rendering/orbs.py"),
     ("ui.widgets", "ui/widgets.py"),
@@ -33,22 +35,68 @@ MODULES = [
 ]
 
 LOCAL_IMPORT = re.compile(r"^from (\.|ui(\s|\.|$)|simulation(\s|\.|$)|rendering(\s|\.|$))")
+ANY_IMPORT = re.compile(r"^from\s+(\.*)([A-Za-z_][\w.]*)?\s+import", re.M)
+
+# packages whose modules get glued together
+PACKAGES = ("ui", "simulation", "rendering")
+
+
+def check_modules() -> None:
+    # every local import has to point at a file that is in MODULES.
+    # forgetting one is invisible until the exact code path that uses it
+    # runs, and then the game just dies in the browser (the time machine
+    # did this for weeks: snapshot.py was never in the list)
+    have = {rel for _, rel in MODULES}
+    missing = []
+    for _, rel in MODULES:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        for m in ANY_IMPORT.finditer(text):
+            dots, mod = m.group(1), m.group(2) or ""
+            if not dots and mod.split(".")[0] not in PACKAGES:
+                continue  # a real library, not ours
+            if not dots and "." not in mod:
+                continue  # "from ui import theme" style, checked below
+            base = Path(rel).parent if dots else Path()
+            target = base / (mod.replace(".", "/") + ".py")
+            if str(target) in have:
+                continue
+            if any(h.startswith(mod.replace(".", "/") + "/") for h in have):
+                continue
+            missing.append(f"  {rel} imports {m.group(0).strip()} -> {target}")
+    if missing:
+        raise SystemExit(
+            "these modules are imported but not in MODULES, the web build "
+            "would break at runtime:\n" + "\n".join(missing)
+        )
 
 
 def strip_local_imports(text: str) -> str:
     # delete "from .x import y" style lines. the bracket counting is for
     # the multi line ones like "from .genome import (\n  a,\n  b,\n)"
+    #
+    # anything renamed on the way in ("import capture as capture_snapshot")
+    # has to become a plain assignment, otherwise the aliased name never
+    # exists and the build dies the first time that code path runs
     lines = text.splitlines()
     out = []
     i = 0
     while i < len(lines):
         s = lines[i].strip()
         if LOCAL_IMPORT.match(s):
+            start = i
             depth = lines[i].count("(") - lines[i].count(")")
-            while depth > 0:
-                i += 1
-                depth += lines[i].count("(") - lines[i].count(")")
             i += 1
+            while depth > 0:
+                depth += lines[i].count("(") - lines[i].count(")")
+                i += 1
+            statement = "\n".join(lines[start:i])
+            try:
+                node = ast.parse(statement).body[0]
+            except SyntaxError:
+                continue
+            for alias in getattr(node, "names", []):
+                if alias.asname:
+                    out.append(f"{alias.asname} = {alias.name}")
             continue
         out.append(lines[i])
         i += 1
@@ -56,6 +104,7 @@ def strip_local_imports(text: str) -> str:
 
 
 def main() -> None:
+    check_modules()
     parts = []
     for name, rel in MODULES:
         src = (ROOT / rel).read_text(encoding="utf-8")
@@ -77,22 +126,49 @@ def main() -> None:
     entry = """
 
 # --- web entry ------------------------------------------------------------
-# pyscript runs this in an async context so we start main() by hand:
-# as a task if there is already a loop running, otherwise asyncio.run
+# pyscript runs this in an async context so we start main() by hand
+def _show_error(text):
+    # put the traceback on the page. if this thing dies silently in a
+    # browser there is nothing to go on, which cost me an hour once
+    print(text)
+    try:
+        from pyscript import window as _win
+
+        box = _win.document.getElementById("err")
+        if box:
+            box.style.display = "block"
+            box.textContent = text
+    except Exception:
+        pass
+
+
+async def _start():
+    try:
+        await main()
+    except BaseException:
+        import traceback
+
+        _show_error(traceback.format_exc())
+
+
+def _hide_loading():
+    try:
+        from pyscript import window as _win
+
+        _status = _win.document.getElementById("status")
+        if _status:
+            _status.style.display = "none"
+    except Exception:
+        pass
+
+
 try:
     asyncio.get_running_loop()
-    asyncio.create_task(main())
+    asyncio.create_task(_start())
+    _hide_loading()
 except RuntimeError:
-    asyncio.run(main())
-
-try:  # just hides the loading text once the game is actually running
-    from pyscript import window as _win
-
-    _status = _win.document.getElementById("status")
-    if _status:
-        _status.style.display = "none"
-except Exception:
-    pass
+    _hide_loading()
+    asyncio.run(_start())
 """
     out = ROOT / "web" / "evolab.py"
     out.write_text(header + "".join(parts) + entry, encoding="utf-8")

@@ -149,7 +149,7 @@ def mutate(g: Genome, rate: float) -> Genome:
     return Genome(**vals)
 
 
-# --- traits -> actual pixels/numbers ----------------------------------
+# traits to real numbers
 
 def body_radius_px(size: float) -> float:
     return 2.0 + size * 6.0  # 2..8 px
@@ -324,6 +324,33 @@ class SpatialGrid:
         return out
 
 
+# ===== simulation/snapshot.py =====
+# time machine snapshots. we copy the world every 0.25s so replay can show
+# an old frame without touching the real one.
+# copy.copy is enough because all we need is position/genome/energy, the
+# "who am i chasing" pointers are useless once the frame is old
+
+import copy
+
+
+
+def capture(world) -> dict:
+    return {
+        "time": world.time,
+        "organisms": [_copy_organism(o) for o in world.organisms],
+        "food": [copy.copy(f) for f in world.food],
+    }
+
+
+def _copy_organism(o: Organism) -> Organism:
+    c = copy.copy(o)
+    # these point at live creatures, they go stale the moment we store them
+    c.target = None
+    c.prey_target = None
+    c.danger = None
+    return c
+
+
 # ===== simulation/ecosystem.py =====
 # the whole world. no pygame in here at all, the UI drives this from outside.
 # everything is a float, nothing is exact, thats kind of the point
@@ -360,7 +387,7 @@ class WorldConfig:
     organisms: int  # starting organism count
     wander_turn_rate: float  # how eagerly a creature changes direction (rad/s)
 
-    # --- energy ---------------------------------------------------------
+    # energy
     max_energy: float = 100.0
     # drain per second = metabolism stuff * body upkeep * efficiency * aggression
     base_metabolism: float = 0.22
@@ -369,11 +396,11 @@ class WorldConfig:
     size_cost: float = 0.8
     efficiency_saving: float = 0.5
 
-    # --- life -----------------------------------------------------------
+    # life
     base_lifespan: float = 120.0  # seconds when the trait is 0
     lifespan_range: float = 480.0  # so max age is between 2 and 10 minutes
 
-    # --- food -----------------------------------------------------------
+    # food
     # food comes in little patches (meadows) instead of evenly sprinkled
     # dots. with even food, whoever was fastest won literally every race
     # and after 10 minutes the whole plate was at max speed, which meant
@@ -386,14 +413,14 @@ class WorldConfig:
     food_energy: float = 12.0  # small meals, lots of them
     initial_food_fraction: float = 0.35  # some at t=0 so it doesnt start dead
 
-    # --- senses ---------------------------------------------------------
+    # senses
     vision_base: float = 30.0
     vision_range: float = 120.0  # so 30..150px depending on the trait
     sense_interval: float = 0.25  # dont rescan every frame, too slow
     hungry_level: float = 0.80  # under 80% energy it goes looking
     steer_rate: float = 6.0  # rad/s. big creatures turn slower
 
-    # --- reproduction ---------------------------------------------------
+    # reproduction
     mate_radius: float = 30.0
     mate_energy_gate: float = 50.0
     mate_cost: float = 18.0  # each parent pays this
@@ -405,13 +432,13 @@ class WorldConfig:
     # tried 1.5 here once, plate went extinct in 4 minutes. keep it at 0.8
     max_population: int = 400  # safety valve
     mutation_rate: float = 0.05  # the MUTATION slider writes into this
-    # --- immigration ----------------------------------------------------
+    # immigration
     # if everything dies we trickle in random strangers so the sim is never
     # just an empty plate. barely ever fires now that breeding works
     min_population: int = 28
     migration_rate: float = 0.15
 
-    # --- predation ------------------------------------------------------
+    # predation
     # aggression is a 0..1 thing: hungry + a dice roll under aggression =
     # go hunting, otherwise go eat plants. important bit: the cost is on
     # the CHASE, not on carrying the gene. the early version taxed the
@@ -495,7 +522,7 @@ class Ecosystem:
             self._spawn_patch()
         self.food_grid.rebuild(self.food)
 
-    # --- events -----------------------------------------------------------
+    # events
 
     def _emit(self, kind: str, x: float, y: float, actor: int, other: int = 0) -> None:
         self.events.append(Event(self.time, kind, x, y, actor, other))
@@ -508,7 +535,7 @@ class Ecosystem:
         self.events.clear()
         return out
 
-    # --- population -----------------------------------------------------
+    # population
 
     def _spawn(self, founder: bool = False) -> None:
         # one new creature: the starting 90 at t=0, or an immigrant later.
@@ -546,7 +573,7 @@ class Ecosystem:
             kind = {"starvation": "starved", "age": "aged"}.get(cause, cause)
             self._emit(kind, o.x, o.y, o.id, by)
 
-    # --- food -------------------------------------------------------------
+    # food
 
     def _spawn_food(self, x: float | None = None, y: float | None = None) -> None:
         c = self.config
@@ -593,7 +620,7 @@ class Ecosystem:
             self._food_acc -= 1.0
             self._spawn_patch()
 
-    # --- sensing -----------------------------------------------------------
+    # sensing
 
     def _vision_range(self, o: Organism) -> float:
         c = self.config
@@ -809,7 +836,7 @@ class Ecosystem:
             self._eat_food(f, o)
             o.target = None
 
-    # --- behaviour ------------------------------------------------------
+    # behaviour
 
     def update(self, dt: float) -> None:
         # advance the world by dt seconds. this is the whole simulation
@@ -918,7 +945,7 @@ class Ecosystem:
         turn = c.steer_rate * (1.0 - 0.5 * o.genome.size)
         o.heading += max(-turn * dt, min(turn * dt, diff))
 
-    # --- reproduction -----------------------------------------------------
+    # reproduction
 
     def _mate(self) -> None:
         # breeding. both parents have to be ready + have the energy, both
@@ -1002,7 +1029,7 @@ class Ecosystem:
                 return p
         return None
 
-    # --- trait costs -----------------------------------------------------
+    # trait costs
 
     def _drain(self, g: Genome) -> float:
         # energy per second. this formula is the whole game really, every
@@ -1018,7 +1045,7 @@ class Ecosystem:
         c = self.config
         return c.base_lifespan + g.lifespan * c.lifespan_range
 
-    # --- observations ----------------------------------------------------
+    # observations
 
     def trait_average(self, trait: str) -> float:
         # population mean of one trait. used by the chart + the inspector
@@ -1085,7 +1112,7 @@ class Ecosystem:
                 best_d = d2
         return best
 
-    # --- helpers ----------------------------------------------------------
+    # helpers
 
     def _migrate(self, dt: float) -> None:
         c = self.config
@@ -1554,7 +1581,7 @@ class Inspector:
         self._chip: pygame.Surface | None = None
         self._chip_key: tuple | None = None
 
-    # --- public API -------------------------------------------------------
+    # drawing
 
     def draw(self, surface: pygame.Surface, rect: pygame.Rect, o: Organism | None,
              config, averages: dict[str, float], descent: Descent | None) -> None:
@@ -1574,7 +1601,7 @@ class Inspector:
         self._draw_traits(surface, rect, y, o, averages)
         self._draw_descent(surface, rect, o, descent)
 
-    # --- sections ---------------------------------------------------------
+    
 
     def _draw_empty(self, surface: pygame.Surface, rect: pygame.Rect, y: int) -> None:
         # nothing selected, just tell them what to do
@@ -1702,11 +1729,8 @@ class Inspector:
 # widget. when a button gets pressed it calls back into main.py, it doesnt
 # touch the world itself (apart from reading it to draw the numbers)
 #
-#   +----------------- header: logo + the dials + buttons -------------+
-#   +--- legend bar ---- clock -- fps ---------------------------------+
-#   |  +-------- plate --------+  +--- sidebar: census / trends / ----+
-#   |  |                        |  |     recent / selected ----------+|
-#
+# layout is header on top, then a legend bar with the clock, then the plate
+# on the left and the sidebar panels stacked down the right hand side
 import random  # not used any more, was for the old sparkline noise
 from collections import deque
 from typing import Callable, NamedTuple
@@ -1740,7 +1764,7 @@ class Hud:
         self._on_seek = on_seek
         self._build_layout(size)
 
-        # --- header controls ------------------------------------------
+        # the widgets in the header
         f = fonts
         self.pause_btn = Button((0, 0, 78, 30), "Pause", f.button)
         self.replay_btn = Button((0, 0, 78, 30), "Replay", f.button, accent=GOLD)
@@ -1763,7 +1787,7 @@ class Hud:
         self._place_header_controls()
         self._place_readouts()
 
-        # --- the RECENT log ---------------------------------------------
+        # the RECENT log
         # (text, colour) pairs. kills go in the second they happen because
         # theyre the interesting bit, but deaths get summed up once per
         # second - a starvation crash would otherwise flood the whole panel
@@ -1780,7 +1804,7 @@ class Hud:
 
         self.meter = Meter(f.small, label_w=44, value_w=0)  # value_w 0 = no numbers
 
-    # --- layout -----------------------------------------------------------
+    # working out where everything goes
 
     def _build_layout(self, size: tuple[int, int]) -> None:
         # work out where everything goes. panel heights come from the font
@@ -1882,7 +1906,7 @@ class Hud:
         self.scrub.rect = pygame.Rect(bar.left + 92, bar.centery - 7,
                                       bar.width - 92 - pos_w - 16, 14)
 
-    # --- properties -------------------------------------------------------
+    # slider values
 
     @property
     def speed(self) -> float:
@@ -1920,7 +1944,7 @@ class Hud:
             return True
         return any(w.rect.collidepoint(pos) for w in self.widgets())
 
-    # --- input ------------------------------------------------------------
+    # mouse and keyboard
 
     def handle(self, event: pygame.event.Event, replaying: bool) -> None:
         if self.pause_btn.handle(event):
@@ -1936,7 +1960,7 @@ class Hud:
             if self.scrub.dragging:
                 self._on_seek(int(self.scrub.value))
 
-    # --- event log --------------------------------------------------------
+    # the log
 
     def consume(self, events: list[Event], world_time: float,
                 max_generation: int) -> None:
@@ -1958,7 +1982,7 @@ class Hud:
             self._last_generation = max_generation
             self.log.append((f"generation {max_generation} reached", ACCENT))
 
-    # --- per-second population views --------------------------------------
+    # numbers that only need updating once a second
 
     def _refresh(self, world: Ecosystem, selected: Organism | None) -> None:
         # once a second: population averages + the selected ones family
@@ -1976,7 +2000,7 @@ class Hud:
             population=len(world.organisms),
         )
 
-    # --- drawing ----------------------------------------------------------
+    # panels
 
     def draw(self, screen: pygame.Surface, world: Ecosystem, selected: Organism | None,
              kin: frozenset[int], paused: bool, replay: Replay | None,
@@ -2436,6 +2460,7 @@ from collections import deque
 
 import pygame
 
+capture_snapshot = capture
 
 # the sim always runs in 1/60s chunks. the SPEED slider changes how many
 # chunks per second, never the size of a chunk, so 0.25x and 20x behave
@@ -2482,7 +2507,7 @@ async def main() -> int:
     fonts = Fonts()
     clock = pygame.time.Clock()
 
-    # --- state ----------------------------------------------------------
+    # state
     paused = False
     selected = None  # the Organism currently picked
     kin: frozenset[int] = frozenset()
@@ -2490,7 +2515,7 @@ async def main() -> int:
     accumulator = 0.0
     frame = 0
 
-    # --- the time machine -----------------------------------------------
+    # the time machine
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False
@@ -2652,19 +2677,46 @@ async def main() -> int:
 
 
 # --- web entry ------------------------------------------------------------
-# pyscript runs this in an async context so we start main() by hand:
-# as a task if there is already a loop running, otherwise asyncio.run
+# pyscript runs this in an async context so we start main() by hand
+def _show_error(text):
+    # put the traceback on the page. if this thing dies silently in a
+    # browser there is nothing to go on, which cost me an hour once
+    print(text)
+    try:
+        from pyscript import window as _win
+
+        box = _win.document.getElementById("err")
+        if box:
+            box.style.display = "block"
+            box.textContent = text
+    except Exception:
+        pass
+
+
+async def _start():
+    try:
+        await main()
+    except BaseException:
+        import traceback
+
+        _show_error(traceback.format_exc())
+
+
+def _hide_loading():
+    try:
+        from pyscript import window as _win
+
+        _status = _win.document.getElementById("status")
+        if _status:
+            _status.style.display = "none"
+    except Exception:
+        pass
+
+
 try:
     asyncio.get_running_loop()
-    asyncio.create_task(main())
+    asyncio.create_task(_start())
+    _hide_loading()
 except RuntimeError:
-    asyncio.run(main())
-
-try:  # just hides the loading text once the game is actually running
-    from pyscript import window as _win
-
-    _status = _win.document.getElementById("status")
-    if _status:
-        _status.style.display = "none"
-except Exception:
-    pass
+    _hide_loading()
+    asyncio.run(_start())

@@ -68,7 +68,7 @@ async def main() -> int:
     fonts = Fonts()
     clock = pygame.time.Clock()
 
-    # --- state ----------------------------------------------------------
+    # state
     paused = False
     selected = None  # the Organism currently picked
     kin: frozenset[int] = frozenset()
@@ -76,7 +76,7 @@ async def main() -> int:
     accumulator = 0.0
     frame = 0
 
-    # --- the time machine -----------------------------------------------
+    # the time machine
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False

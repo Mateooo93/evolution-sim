@@ -68,7 +68,7 @@ def mutate(g: Genome, rate: float) -> Genome:
     return Genome(**vals)
 
 
-# --- traits -> actual pixels/numbers ----------------------------------
+# traits to real numbers
 
 def body_radius_px(size: float) -> float:
     return 2.0 + size * 6.0  # 2..8 px
