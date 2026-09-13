@@ -1,6 +1,6 @@
 # EvoLab
 
-An artificial life sim in Python. Around 150 creatures live on a 2D world:
+Evolab is an artificial life sim in Python. Around 150 creatures live on a 2D world:
 they look for food, run from each other, hunt, and breed. Each one has 8
 traits and passes them on with small random changes, so the population
 changes on its own over a few minutes.
@@ -10,13 +10,13 @@ changes on its own over a few minutes.
     .venv/bin/python -m pip install -r requirements.txt
     .venv/bin/python main.py
 
-Space pauses. R replays the last minute. Clicking a creature shows its genome,
-its energy and its family line in the panel on the right. The sliders in the
-header change how much food spawns, how aggressive the world selects for, the
+Controls: Space pauses. R replays the last minute. Clicking a creature shows its genome,
+its energy and its family line in the panel on the right.YOu can also cahnge some settings using
+The sliders whichchange how much food spawns, how aggressive the world selects for, the
 speed, and the mutation rate.
 
-Food comes in patches. Everything costs energy, including moving and having a
-big body, and hunting costs extra. You can only sprint while you still have
+Food comes in patches and the little creatures need them because Everything costs energy, including moving and having a
+big body, and hunting costs extra energy/food. They can only sprint while you still have
 energy left, so a chase usually ends when the one being chased runs out of it.
 Hunters get less energy out of plants than plant eaters do, so most of the
 population stays on plants. If the population drops below 28 the game slowly
