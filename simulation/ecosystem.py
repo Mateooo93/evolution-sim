@@ -119,7 +119,7 @@ class WorldConfig:
     # any of them is doing
     role_span: float = 2.5
     # Aggression must exceed a sensed organism's by at least this margin
-    # for it to count as prey (and to trigger fleeing) — so similar
+    # for it to count as prey (and to trigger fleeing), so similar
     # neighbours ignore each other instead of flinching constantly.
     hunt_margin: float = 0.1
     # how much faster than someone you have to be to bother chasing them.
@@ -237,7 +237,7 @@ class Ecosystem:
     def _spawn_food(self, x: float | None = None, y: float | None = None) -> None:
         c = self.config
         f = Food(
-            id=self._next_id,  # shares the id space with organisms — ids are unique
+            id=self._next_id,  # same id space as organisms so every id is unique
             x=random.random() * c.width if x is None else x,
             y=random.random() * c.height if y is None else y,
             energy=c.food_energy,

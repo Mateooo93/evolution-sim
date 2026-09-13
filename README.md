@@ -3,7 +3,7 @@
 An artificial life sim in Python. Around 150 creatures live on a 2D world:
 they look for food, run from each other, hunt, and breed. Each one has 8
 traits and passes them on with small random changes, so the population
-drifts while you sit and watch.
+changes on its own over a few minutes.
 
     python3 -m venv .venv
     .venv/bin/python -m ensurepip --upgrade
@@ -15,12 +15,12 @@ its energy and its family line in the panel on the right. The sliders in the
 header change how much food spawns, how aggressive the world selects for, the
 speed, and the mutation rate.
 
-Food comes in patches, and everything costs energy: moving, having a big body,
-having high metabolism. Hunting costs energy too and you can only sprint while
-you still have some left, so a chase usually ends when the one being chased
-runs out. Hunters get less out of plants, which is why most of the population
-stays on plants. If the population drops below 28 the game slowly adds random
-new creatures, but on normal settings that almost never happens.
+Food comes in patches. Everything costs energy, including moving and having a
+big body, and hunting costs extra. You can only sprint while you still have
+energy left, so a chase usually ends when the one being chased runs out of it.
+Hunters get less energy out of plants than plant eaters do, so most of the
+population stays on plants. If the population drops below 28 the game slowly
+adds random new creatures, but on normal settings that almost never happens.
 
 simulation/ is the world and has no pygame in it at all, so it runs without a
 window. rendering/ draws it, ui/ is the panels and sliders, and main.py runs

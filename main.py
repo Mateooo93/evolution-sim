@@ -42,7 +42,7 @@ IN_BROWSER = sys.platform == "emscripten"
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="EvoLab — artificial ecosystem simulator")
+    parser = argparse.ArgumentParser(description="EvoLab, an artificial ecosystem simulator")
     parser.add_argument(
         "--frames", type=int, default=0,
         help="quit after N rendered frames (0 = run until closed)",

@@ -1,45 +1,28 @@
-DevLog #3 the browser build
+# DevLog #3 the browser build
 
-The game now runs in the browser, so instead of "install python, make a
-venv, pip install, run it" everyone can just open a link and watch their
-own evolution unfold. The desktop version is untouched - same code,
-same everything.
+it runs in the browser now. instead of install python, make a venv, pip install,
+run it, you can open a link. the desktop version is the same code.
 
-how it works
-The browser runs python through PyScript: it downloads a WebAssembly
-build of python plus pygame into the page and runs the game right there.
-No server, no install, just an html file that loads python on demand.
-The first load takes a few seconds (python is about 10 megabytes) but
-after that it just plays, with the same creatures, sliders and
-sparklines as the desktop one.
+pyscript downloads a webassembly build of python plus pygame into the page and
+runs the game there. no server involved. the first load takes a few seconds
+because python is around 10 megabytes, then it plays. the page is about 500
+bytes of html, everything else is python.
 
-one file
-There was one catch: the browser loader only executes a single python
-file, and the game is split into nine modules across the project. So i
-wrote a build script (web/build.py) that stitches all the modules
-together in dependency order, drops the local imports (every name ends
-up in one shared namespace anyway) and appends the browser entry point
-at the end. Re-run it whenever the code changes and web/evolab.py is
-fresh again. No second copy of the game to keep in sync - the browser
-build is generated from the real sources.
+the catch is that the browser loader only runs one python file, and the game is
+split across the project. so web/build.py stitches the modules together in
+dependency order, drops the local imports since every name ends up in one
+namespace anyway, and puts the browser entry point on the end. run it after
+changing anything and web/evolab.py is current. it is generated, so the browser
+version is never a second copy of the game that drifts.
 
-the loop
-The other catch was the game loop. On the desktop the loop blocks on
-the clock to hold 60 fps, but in the browser the page drives the frames,
-so the loop has to yield back to the event loop with an await instead.
-So main() is now async and it picks its frame-wait at startup: in the
-browser it awaits a tick and measures the time that passed, on the
-desktop it keeps blocking on the clock exactly like before. One loop,
-two runtimes, decided by one check.
+the other catch was the game loop. on the desktop the loop blocks on the clock
+to hold 60fps, but in a browser you cannot block, the page drives the frames.
+so main() is async and picks how to wait at startup. in the browser it awaits a
+tick and measures how long that took. on the desktop it keeps blocking on the
+clock like before.
 
-deploying
-To put it on GitHub Pages you push the web folder to the gh-pages
-branch (one command, its in the README) and flip the Pages setting in
-the repo - the game goes live at yourname.github.io/evolution-sim.
-That is the part i could not test from here, so you are the first real
-audience for the deployed version.
+to put it up i pushed the web folder to the gh-pages branch and turned on pages
+in the repo settings. it should be live at mateooo93.github.io/evolution-sim.
+i could not test that part from here.
 
-NEXT
-next im gonna make predators! the aggression trait finally gets used -
-hunters that chase the slow, and prey that learn to run. and with the
-browser build done, i can share the game with a link while it evolves!
+next: predators. the aggression trait finally gets used.
