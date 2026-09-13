@@ -1,17 +1,14 @@
-"""The heads-up display: everything on screen that is not the plate.
-
-The HUD owns the layout, the chrome, and the input routing. It knows
-nothing about how the world is stepped or recorded — the app hands it the
-current world and a little state (paused, replay position, selection) and
-it paints; when a control is used it fires a callback back to the app.
-
-    ┌ header ────────────── EVOLAB ── speed / mutation / pause / replay ┐
-    │ key bar ── colour legend ─────────────── clock ── fps            │
-    │ ┌── plate ────────────────────────┐ ┌ census ── trends ───┐      │
-    │ │                                │ │ recent ── selected ─┐      │
-    └─┴────────────────────────────────┴─┴─────────────────────┴──────┘
-"""
-
+# the HUD. everything on screen that isnt the actual plate.
+# it does the layout, draws the panels and routes the mouse to the right
+# widget. when a button gets pressed it calls back into main.py, it doesnt
+# touch the world itself (apart from reading it to draw the numbers)
+#
+#   +----------------- header: logo + the dials + buttons -------------+
+#   +--- legend bar ---- clock -- fps ---------------------------------+
+#   |  +-------- plate --------+  +--- sidebar: census / trends / ----+
+#   |  |                        |  |     recent / selected ----------+|
+#
+import random  # not used any more, was for the old sparkline noise
 from collections import deque
 from typing import Callable, NamedTuple
 
@@ -42,7 +39,7 @@ TILE_COLS = 3
 
 
 class Replay(NamedTuple):
-    """Where the time machine's playhead is."""
+    # where we are in the recording while replaying
 
     index: int
     total: int
@@ -67,6 +64,12 @@ class Hud:
         self.speed_slider = Slider((0, 0, 150, 16), f.small, 0.25, 20.0, 1.0)
         self.mut_slider = Slider((0, 0, 110, 16), f.small, 0.001, 0.20, 0.05,
                                  step=0.001, accent=theme.FOOD)
+        # The two environment dials: the world's food supply and the
+        # selection regime the lab imposes on aggression.
+        self.food_slider = Slider((0, 0, 110, 16), f.small, 0.1, 2.5, 1.0,
+                                  step=0.05, accent=theme.FOOD)
+        self.pressure_slider = Slider((0, 0, 110, 16), f.small, -1.0, 1.0, 0.0,
+                                      step=0.05, accent=theme.PREDATOR, bipolar=True)
         # Time-machine scrub bar (only drawn while replaying).
         self.scrub = Slider((0, 0, 400, 14), f.small, 0, 239, 0, step=1, accent=theme.GOLD)
 
@@ -77,28 +80,28 @@ class Hud:
         self._place_header_controls()
         self._place_readouts()
 
-        # --- event log --------------------------------------------------
-        # Lines are (text, colour). Deaths are summarised once per simulated
-        # second (a crash would otherwise flood the panel), while a kill is
-        # pushed straight away with both ids: those are the moments worth
-        # reading, and everything else is bookkeeping.
+        # --- the RECENT log ---------------------------------------------
+        # (text, colour) pairs. kills go in the second they happen because
+        # theyre the interesting bit, but deaths get summed up once per
+        # second - a starvation crash would otherwise flood the whole panel
         self.log: deque[tuple[str, tuple[int, int, int]]] = deque(maxlen=40)
         self._pending: dict[str, int] = {}
         self._log_second = -1
         self._last_generation = 1
 
-        # Cached per-second views of the population (trait averages and the
-        # selected creature's family), so the panel costs O(n) per second
-        # rather than O(n) per frame.
+        # these get recomputed once a second, not every frame. looping the
+        # population 60x a second for the trait averages was silly
         self._stat_second = -1
         self._averages: dict[str, float] = {}
         self._descent: Descent | None = None
 
-        self.meter = Meter(f.small, label_w=44, value_w=0)
+        self.meter = Meter(f.small, label_w=44, value_w=0)  # value_w 0 = no numbers
 
     # --- layout -----------------------------------------------------------
 
     def _build_layout(self, size: tuple[int, int]) -> None:
+        # work out where everything goes. panel heights come from the font
+        # metrics so nothing overlaps if the fonts change
         w, h = size
         m = theme.MARGIN
         self.header = pygame.Rect(m, m, w - 2 * m, theme.HEADER_H)
@@ -110,7 +113,7 @@ class Hud:
         self.plate = pygame.Rect(m, self.keybar.bottom + 4, plate_w,
                                  h - self.keybar.bottom - 4 - m)
 
-        # Sidebar panels, top to bottom, sized from font metrics.
+        # the sidebar, top to bottom
         f = self.fonts
         pad = theme.PANEL_PAD
         tile_h = f.metric.get_height() + f.small.get_height() + 6
@@ -132,35 +135,59 @@ class Hud:
         self.inspector = Inspector(self.fonts)
 
     def _place_header_controls(self) -> None:
-        """Right-align the toolbar groups inside the header."""
+        # lay the toolbar out from the right edge backwards. two groups:
+        # the world dials (food, aggression) then a divider then the sim
+        # controls (speed, mutation) then the buttons. the divider is there
+        # so it reads as two different kinds of control
         f = self.fonts
         cy = self.header.centery
         slider_y = cy - 6
         value_gap, group_gap = 8, 18
         value_w = 46
+        divider_gap = 13
 
-        speed_w = self.speed_slider.rect.width + value_gap + value_w
-        mut_w = self.mut_slider.rect.width + value_gap + value_w
-        total = speed_w + group_gap + mut_w + group_gap + 78 + 8 + 78
+        def group_width(slider: Slider) -> int:
+            return slider.rect.width + value_gap + value_w
+
+        widths = [group_width(s) for s in
+                  (self.food_slider, self.pressure_slider, self.speed_slider,
+                   self.mut_slider)]
+        total = (sum(widths) + group_gap * 3 + 2 * divider_gap
+                 + 78 + 8 + 78)
         x = self.header.right - 16 - total
+
+        self.env_labels = []
+        for label_text, slider, value_text, color in (
+            ("FOOD", self.food_slider, "1.00×", theme.FOOD),
+            ("AGGRESSION", self.pressure_slider, "0.00", theme.PREDATOR),
+        ):
+            self.env_labels.append(
+                (Label((x, cy - 14), label_text, f.tiny, theme.TEXT_FAINT), slider,
+                 Label((x + slider.rect.width + value_gap, cy), value_text, f.small, color))
+            )
+            slider.rect.topleft = (x, slider_y)
+            x += group_width(slider) + group_gap
+
+        self.divider_x = x - group_gap + divider_gap // 2
+        x += 2 * divider_gap - group_gap
 
         self.speed_label = Label((x, cy - 14), "SPEED", f.tiny, theme.TEXT_FAINT)
         self.speed_slider.rect.topleft = (x, slider_y)
         self.speed_value = Label((x + self.speed_slider.rect.width + value_gap, cy),
                                  "1.0x", f.small, theme.TEXT)
-        x += speed_w + group_gap
+        x += group_width(self.speed_slider) + group_gap
 
         self.mut_label = Label((x, cy - 14), "MUTATION", f.tiny, theme.TEXT_FAINT)
         self.mut_slider.rect.topleft = (x, slider_y)
         self.mut_value = Label((x + self.mut_slider.rect.width + value_gap, cy),
                                "5.0%", f.small, theme.TEXT)
-        x += mut_w + group_gap
+        x += group_width(self.mut_slider) + group_gap
 
         self.pause_btn.rect.topleft = (x, cy - 15)
         self.replay_btn.rect.topleft = (self.pause_btn.rect.right + 8, cy - 15)
 
     def _place_readouts(self) -> None:
-        """Positions for the key-bar readouts, the state chip and the scrub bar."""
+        # the clock/fps in the legend bar and the replay scrub bar
         self.clock.pos = (self.keybar.right - 8 - 74, self.keybar.centery)
         self.fps.pos = (self.keybar.right - 8, self.keybar.centery)
         self.state.pos = (self.plate.left + 12, self.plate.top + 14)
@@ -182,16 +209,26 @@ class Hud:
     def mutation(self) -> float:
         return self.mut_slider.value
 
+    @property
+    def food_scale(self) -> float:
+        return self.food_slider.value
+
+    @property
+    def pressure(self) -> float:
+        return self.pressure_slider.value
+
+    # how long the recording is, so the scrub bar covers exactly it
     def set_replay_span(self, total: int) -> None:
         self.scrub.max = max(1, total - 1)
         self.scrub.value = 0
 
     def widgets(self) -> tuple:
         return (self.pause_btn, self.replay_btn, self.speed_slider, self.mut_slider,
-                self.scrub)
+                self.food_slider, self.pressure_slider, self.scrub)
 
     def chrome_at(self, pos: tuple[int, int], replaying: bool) -> bool:
-        """True if a point is over chrome, so plate clicks don't leak into it."""
+        # is this point on the UI rather than the plate. otherwise clicking
+        # a panel would also try to select whatever creature is underneath
         if self.header.collidepoint(pos) or self.keybar.collidepoint(pos):
             return True
         if self.sidebar.collidepoint(pos):
@@ -209,6 +246,8 @@ class Hud:
             self._on_toggle_replay()
         self.speed_slider.handle(event)
         self.mut_slider.handle(event)
+        self.food_slider.handle(event)
+        self.pressure_slider.handle(event)
         if replaying:
             self.scrub.handle(event)
             if self.scrub.dragging:
@@ -239,7 +278,7 @@ class Hud:
     # --- per-second population views --------------------------------------
 
     def _refresh(self, world: Ecosystem, selected: Organism | None) -> None:
-        """Trait averages and the selection's family — once per sim second."""
+        # once a second: population averages + the selected ones family
         second = int(world.time)
         if second == self._stat_second:
             return
@@ -289,6 +328,23 @@ class Hud:
         self.replay_btn.active = replaying
         self.replay_btn.draw(screen, mouse)
 
+        # Environment dials, then the hairline, then the sim controls.
+        for (label, slider, value), text in zip(
+            self.env_labels,
+            (f"{self.food_scale:.2f}×",
+             f"{self.pressure:+.2f}" if self.pressure else "0.00"),
+        ):
+            label.draw(screen)
+            slider.draw(screen, mouse)
+            if value.text != text:
+                value.set_text(text)
+            value.draw(screen)
+        pygame.draw.line(
+            screen, theme.PANEL_BORDER,
+            (self.divider_x, self.header.top + 12),
+            (self.divider_x, self.header.bottom - 12), 1,
+        )
+
         self.speed_label.draw(screen)
         self.speed_slider.draw(screen, mouse)
         self.speed_value.set_text(f"{self.speed_slider.value:.2f}x")
@@ -300,6 +356,7 @@ class Hud:
 
     def _draw_keybar(self, screen: pygame.Surface, world: Ecosystem, paused: bool,
                      replay: Replay | None, fps: float) -> None:
+        # the strip under the header: what all the colours mean + clock + fps
         draw_panel(screen, self.keybar, radius=6)
         f = self.fonts
         x = self.keybar.left + 10
@@ -331,6 +388,7 @@ class Hud:
             self.state.draw(screen)
 
     def _draw_census(self, screen: pygame.Surface, world: Ecosystem) -> None:
+        # population / food / generation / births / starved / eaten tiles
         draw_panel(screen, self.census_panel)
         f = self.fonts
         pad = theme.PANEL_PAD
@@ -358,7 +416,7 @@ class Hud:
             stat_tile(screen, rect, value, caption, f, color)
         y += TILE_ROWS * tile_h + (TILE_ROWS - 1) * gap + 10
 
-        # Diet split: how the plate divides between grazers and hunters.
+        # the diet bar. prey green, mixed amber, predators red
         prey, mixed, pred = world.role_counts()
         total = max(1, prey + mixed + pred)
         bar = pygame.Rect(x0, y + f.small.get_height() + 2,
@@ -392,6 +450,7 @@ class Hud:
         )
 
     def _draw_log(self, screen: pygame.Surface) -> None:
+        # newest line at the top, however many fit in the panel
         draw_panel(screen, self.log_panel)
         f = self.fonts
         pad = theme.PANEL_PAD
@@ -407,7 +466,9 @@ class Hud:
 
     def _draw_scrub(self, screen: pygame.Surface, replay: Replay,
                     mouse: tuple[int, int]) -> None:
-        """The time-machine bar, laid over the foot of the plate."""
+        # the replay bar. it sits over the bottom of the plate like a video
+        # player timeline. TODO clicking the plate under it is blocked while
+        # replaying, which is fine for now
         bar = pygame.Rect(self.plate.left, self.plate.bottom - 46, self.plate.width, 40)
         pygame.draw.rect(screen, theme.PANEL, bar, border_radius=6)
         pygame.draw.rect(screen, theme.GOLD, bar, width=1, border_radius=6)
@@ -423,7 +484,7 @@ class Hud:
         self.replay_pos.draw(screen)
 
     def _draw_hints(self, screen: pygame.Surface) -> None:
-        """A quiet strip of controls in the plate's corner."""
+        # little key hints in the corner of the plate
         f = self.fonts
         hints = (("SPACE", "pause"), ("R", "replay"), ("click", "inspect a creature"))
         width = sum(

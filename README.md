@@ -30,9 +30,25 @@ errors, run `sudo apt install -y python3-venv python3-pip` first.)
 | click a creature | select it: a reticle marks it, the panel shows its genome, energy, age and line |
 | click empty plate | deselect |
 
-The header carries the pause and replay buttons, a speed slider
-(0.25×–20×, the simulator runs as fast as the machine manages) and the
-per-birth mutation rate.
+The header carries three kinds of control, left to right: the two
+**environment dials**, a hairline, then the simulation controls.
+
+| Dial | Range | What it does |
+| --- | --- | --- |
+| **FOOD** | 0.1×–2.5× | scales the plate's food supply, live. Below 1× is a famine that culls the world down to the immigration floor; above 1× the plate fills and the population booms until the standing stock is eaten back down |
+| **AGGRESSION** | −1…+1 | the selection regime the lab imposes on the gene pool. Positive pulls every newborn 40%-of-the-way toward full hunter and seeds new arrivals above zero; negative pushes back toward pure grazers; `0.00` leaves evolution alone |
+| **SPEED** | 0.25×–20× | how many simulation steps run per real second (the sim runs as fast as the machine manages) |
+| **MUTATION** | 0.1%–20% | per-trait mutation probability per birth |
+
+The aggression dial is a bias on inheritance, not an override: selection
+still gets the last word. Which is the point — the dial is an experiment.
+Winding it to `+1.00` does not produce a plate of efficient killers, it
+produces a stalemate: with every creature pinned at the top of the
+aggression spectrum, no one is 0.10 more aggressive than anyone else, so
+nothing can hunt, and the population survives on plants at a third of its
+former numbers while the food piles up uneaten. Crank it to `−1.00` and
+you get the opposite: a dense, peaceful, fast-breeding herd that
+over-grazes the plate.
 
 ## Reading the plate
 
@@ -119,16 +135,10 @@ live at `https://YOURNAME.github.io/evolution-sim/`.
 - `rendering/` — a dumb view: `renderer.py` paints the world onto its own
   plate surface (the app blits it into the layout), `orbs.py` holds the
   colour model and the pre-rendered orb sprites shared with the inspector.
-- `ui/` — `theme.py` (palette and metrics), `fonts.py` (one font stack,
-  with a fallback for the browser), `widgets.py` (button, slider, meter,
-  tiles), `charts.py` (trends), `inspector.py` (the specimen panel) and
-  `hud.py` (layout, chrome, input routing).
-- `tests/` — the simulation contracts, stepping the world directly:
-
-  ```bash
-  .venv/bin/python -m unittest discover -s tests -v
-  ```
-
+- `ui/` — `theme.py` (palette and layout numbers), `fonts.py` (one font
+  stack, with a fallback for the browser), `widgets.py` (button, slider,
+  meter, tiles), `charts.py` (trends), `inspector.py` (the specimen panel)
+  and `hud.py` (layout, panels, input routing).
 The simulation advances on a fixed 60 Hz timestep with an accumulator;
 the speed control scales how many steps run per real second, never the
 step size.
@@ -176,20 +186,27 @@ chart shows it). A specialist predator *caste* does not emerge — the
 aggression continuum settles at a mixed strategy instead. That is an
 honest result of the rules, not a bug: the final devlog goes into it.
 
-## Verifying without a display
+Turning the dials, measured over 400 seconds from the same seed and
+starting population:
 
-The dev machine has no monitor, so everything is checked headless (SDL's
-dummy video driver). `main.py` grows two flags for it:
+| Setting | Population | Mean aggression | Successful hunts |
+| --- | --- | --- | --- |
+| neutral (default) | 125–210 | 0.00 → 0.11 | 109 |
+| **AGGRESSION** `+1.00` | 26–90 | 1.00 (pinned) | 0 |
+| **AGGRESSION** `−1.00` | 176–217 | 0.00 → 0.01 | 24 |
+| **FOOD** `2.0×` | 210–343 | 0.03 → 0.13 | 229 |
+| **FOOD** `0.15×` | 22–36, on the immigration floor | 0.05 → 0.22 | 52 |
+
+## Dev flags
+
+No monitor on this machine, so `main.py` takes a couple of dev flags:
 
 ```bash
-# run 420 frames, save the last one — the frame the checks analyse
 SDL_VIDEODRIVER=dummy .venv/bin/python main.py --frames 420 --seed 5 --shot /tmp/frame.png
 ```
 
-- the unit tests step the simulation directly (no window at all);
-- `--frames` + `--shot` render real frames for pixel inspection;
-- the web bundle is checked by executing the concatenated file and running
-  its own loop, in both the desktop and the browser code path.
+`--frames N` quits after N frames, `--seed` makes a run reproducible and
+`--shot` saves the last frame so you can look at it later.
 
 ## Devlogs
 

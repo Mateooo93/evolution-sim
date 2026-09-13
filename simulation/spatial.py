@@ -1,10 +1,6 @@
-"""Spatial hash grid: fast neighbor queries on the toroidal world.
-
-Rebuilt once per tick (cheap: one dict insert per item). Queries scan
-only the cells a circle overlaps, so cost is independent of population
-size for small radii — this is what makes local mating (and later,
-predation) affordable at large populations.
-"""
+# spatial hash grid. buckets the plate into cells so "whats near me"
+# doesnt mean looping over every creature on screen.
+# rebuilt from scratch every tick, its cheap enough (one dict insert each)
 
 import math
 
@@ -14,6 +10,7 @@ class SpatialGrid:
         self.width = width
         self.height = height
         self.cell = cell
+        # 64px cells felt right, smaller and there are too many buckets
         self.cols = max(1, math.ceil(width / cell))
         self.rows = max(1, math.ceil(height / cell))
         self.cells: dict[tuple[int, int], list] = {}
@@ -29,13 +26,10 @@ class SpatialGrid:
                 bucket.append(it)
 
     def nearest(self, x: float, y: float, radius: float, accept=None):
-        """The closest item within `radius` of (x, y), or None.
-
-        Toroidal like `within`, but returns one item instead of a list —
-        which is what sensing wants, and it allocates nothing. `accept`
-        optionally filters candidates (e.g. "is this actually prey?").
-        """
+        # closest thing in radius, or None. this is what the sensing code
+        # calls. accept= is a filter so we can ask for "nearest PREY" etc
         c = self.cell
+        # world wraps around so everything has to be measured the short way
         half_w, half_h = self.width / 2, self.height / 2
         best = None
         best_d2 = radius * radius
@@ -46,6 +40,7 @@ class SpatialGrid:
 
         for cx in range(x0, x1 + 1):
             for cy in range(y0, y1 + 1):
+                # % wraps the cell index so it works across the edges
                 bucket = self.cells.get((cx % self.cols, cy % self.rows))
                 if not bucket:
                     continue
@@ -56,21 +51,21 @@ class SpatialGrid:
                     elif dx < -half_w:
                         dx += self.width
                     if dx * dx > best_d2:
-                        continue  # early reject on x alone
+                        continue  # already too far in x, skip the rest
                     dy = it.y - y
                     if dy > half_h:
                         dy -= self.height
                     elif dy < -half_h:
                         dy += self.height
                     d2 = dx * dx + dy * dy
-                    # Tightening `best_d2` as we go prunes later candidates.
+                    # shrink best_d2 as we go so later cells get rejected sooner
                     if d2 <= best_d2 and (accept is None or accept(it)):
                         best_d2 = d2
                         best = it
         return best
 
     def within(self, x: float, y: float, radius: float) -> list:
-        """Items within `radius` of (x, y), toroidal-aware."""
+        # everything in radius, not just the closest one. mating uses this
         c = self.cell
         half_w, half_h = self.width / 2, self.height / 2
         r2 = radius * radius

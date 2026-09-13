@@ -1,4 +1,4 @@
-"""Food — the resource organisms compete for."""
+# food. thats it. an amber dot you can eat
 
 from dataclasses import dataclass
 

@@ -1,14 +1,8 @@
-"""Hand-drawn UI widgets.
-
-pygame ships no controls, so every element here is drawn from primitives.
-Each widget owns its rect, draws itself from palette values, and returns
-True from `handle` when it was activated. Widgets are stateless apart
-from hover/press flags — the app keeps the real state — so a panel can be
-redrawn at any time from the current world.
-
-`draw` takes the current mouse position so hover states are available
-without widgets reaching for global state themselves.
-"""
+# the UI widgets. pygame has no buttons or sliders so these are all drawn
+# from scratch out of rectangles and circles.
+# every widget owns its own rect and knows how to draw itself. draw() takes
+# the mouse position so we can do hover effects without each widget asking
+# pygame for it separately
 
 import pygame
 
@@ -16,7 +10,8 @@ from ui import theme
 
 
 def draw_panel(surface: pygame.Surface, rect: pygame.Rect, radius: int = 8) -> None:
-    """The standard chrome surface: a raised panel with a hairline border."""
+    # a panel with a thin border. borders make the biggest difference to
+    # how "finished" this looks, i use this everywhere
     pygame.draw.rect(surface, theme.PANEL, rect, border_radius=radius)
     pygame.draw.rect(surface, theme.PANEL_BORDER, rect, width=1, border_radius=radius)
 
@@ -27,7 +22,8 @@ def draw_tile(surface: pygame.Surface, rect: pygame.Rect, hover: bool = False,
 
 
 class Label:
-    """A single line of text, re-rendered only when it changes."""
+    # a bit of text. rerendering every frame for 10 labels was a waste so
+    # it only re-renders when the string actually changes
 
     def __init__(
         self,
@@ -40,7 +36,7 @@ class Label:
         self.pos = pos
         self.font = font
         self.color = color
-        self.anchor = anchor  # any pygame.Rect anchor name
+        self.anchor = anchor  # any of pygames rect anchors, "midleft" etc
         self.text = text
         self.surface = font.render(text, True, color)
 
@@ -54,7 +50,7 @@ class Label:
 
 
 class Button:
-    """A clickable label. `active` inverts it (used for Pause / Replay)."""
+    # clicky label. active=True paints it filled in (used for Pause/Replay)
 
     def __init__(
         self,
@@ -72,7 +68,8 @@ class Button:
         self._pressed = False
 
     def handle(self, event: pygame.event.Event) -> bool:
-        """Process one event; True when the button was clicked."""
+        # returns True on the click, this style of "press then release on
+        # the same rect" is what everyone expects from a button
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             self._pressed = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
@@ -95,7 +92,7 @@ class Button:
 
 
 class Slider:
-    """Horizontal slider with a filled track; value snapped to `step`."""
+    # horizontal slider. the value snaps to `step`
 
     def __init__(
         self,
@@ -106,6 +103,7 @@ class Slider:
         value: float,
         step: float = 0.25,
         accent: tuple[int, int, int] = theme.ACCENT,
+        bipolar: bool = False,
     ) -> None:
         self.rect = pygame.Rect(rect)
         self.font = font
@@ -113,6 +111,9 @@ class Slider:
         self.max = max_value
         self.step = step
         self.accent = accent
+        # bipolar sliders (-1..+1) fill out from the middle instead of the
+        # left, otherwise "0" looks half full which is just wrong
+        self.bipolar = bipolar
         self._value = value
         self._drag = False
 
@@ -127,12 +128,14 @@ class Slider:
 
     @property
     def dragging(self) -> bool:
-        """True while the user holds the knob (pauses timed auto-advance)."""
+        # while the user is holding the knob (replay uses this to stop
+        # auto-advancing under the cursor)
         return self._drag
 
     @property
     def track(self) -> pygame.Rect:
-        """The clickable band, taller than the drawn line so it is easy to hit."""
+        # the line is 4px high but the thing you can click is 12px, nobody
+        # can hit a 4px target
         return self.rect.inflate(0, 12)
 
     def _set_from_x(self, x: int) -> None:
@@ -158,31 +161,31 @@ class Slider:
         hovered = self.track.collidepoint(mouse) or self._drag
         pygame.draw.line(surface, theme.METER_BG, (self.rect.left, y), (self.rect.right, y), 4)
         knob = self._knob_x()
-        if knob > self.rect.left:
-            pygame.draw.line(surface, self.accent, (self.rect.left, y), (knob, y), 4)
+        origin = self._origin_x()
+        if knob != origin:
+            lo, hi = min(knob, origin), max(knob, origin)
+            pygame.draw.line(surface, self.accent, (lo, y), (hi, y), 4)
         if hovered:
             pygame.draw.circle(surface, theme.ACCENT_DIM, (knob, y), 9)
         pygame.draw.circle(surface, self.accent, (knob, y), 6)
         pygame.draw.circle(surface, theme.BG, (knob, y), 2)
 
+    def _origin_x(self) -> int:
+        # where the coloured part starts from
+        return (self.rect.left + self.rect.width // 2) if self.bipolar else self.rect.left
+
 
 class Meter:
-    """A labelled progress bar: `label  ▓▓▓░░░  62/100`."""
+    # label, bar, value. used for energy/age/readiness in the inspector
 
     def __init__(self, font: pygame.font.Font, label_w: int = 34, value_w: int = 62) -> None:
         self.font = font
         self.label_w = label_w
         self.value_w = value_w
 
-    def draw(
-        self,
-        surface: pygame.Surface,
-        rect: pygame.Rect,
-        label: str,
-        fraction: float,
-        text: str,
-        color: tuple[int, int, int] = theme.ACCENT,
-    ) -> None:
+    def draw(self, surface: pygame.Surface, rect: pygame.Rect, label: str,
+             fraction: float, text: str,
+             color: tuple[int, int, int] = theme.ACCENT) -> None:
         surface.blit(self.font.render(label, True, theme.TEXT_DIM), (rect.left, rect.top))
         bar = pygame.Rect(
             rect.left + self.label_w, rect.top + 1,
@@ -207,7 +210,8 @@ def stat_tile(
     fonts,
     color: tuple[int, int, int] = theme.TEXT,
 ) -> None:
-    """A number with a caption under it — the census readout unit."""
+    # a big number with a small caption under it. the sidebar is made of
+    # these
     draw_tile(surface, rect)
     big = fonts.metric.render(value, True, color)
     surface.blit(big, big.get_rect(midtop=(rect.centerx, rect.top + 4)))
@@ -217,7 +221,9 @@ def stat_tile(
 
 def keycap(surface: pygame.Surface, pos: tuple[int, int], key: str, fonts,
            text: str) -> int:
-    """Draw `[key] hint` with the key in a little box; return the width used."""
+    # draws a little keyboard key in a box next to some text, like
+    # [SPACE] pause. returns how wide it ended up so the caller can lay the
+    # next one out after it
     rendered = fonts.keycap.render(key, True, theme.TEXT_DIM)
     box = pygame.Rect(pos[0], pos[1] - 7, rendered.get_width() + 8, 14)
     pygame.draw.rect(surface, theme.RAISED, box, border_radius=3)

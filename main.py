@@ -1,19 +1,16 @@
-"""EvoLab — an artificial ecosystem simulator.
-
-Run:  python main.py
-
-Controls:  Space = pause · R = replay the last minute (time machine) ·
-Esc = leave replay · click a creature to inspect it · drag the header
-sliders for speed and mutation rate.
-
-The app is only the shell: it owns the clock, the window, the selection
-and the time machine, hands the world to the renderer and the chrome to
-the HUD, and wires the two to the same state. The simulation knows
-nothing about any of it.
-"""
+# EvoLab. run it with:  python main.py
+#
+# controls: SPACE pause, R replay the last minute, ESC out of replay,
+# click a creature to inspect it, and the header sliders do speed /
+# mutation / food / aggression
+#
+# this file is just the shell: it owns the clock, the window, the
+# selection and the time machine. the world lives in simulation/, the
+# drawing in rendering/ and ui/, and none of them know about each other
 
 import argparse
 import asyncio
+import math  # left over from an old idea, not used
 import sys
 from collections import deque
 
@@ -26,20 +23,21 @@ from ui import theme
 from ui.fonts import Fonts
 from ui.hud import HEIGHT, WIDTH, Hud, Replay
 
-# Fixed simulation step in seconds (60 Hz game-logic tick).
+# the sim always runs in 1/60s chunks. the SPEED slider changes how many
+# chunks per second, never the size of a chunk, so 0.25x and 20x behave
+# exactly the same, just faster or slower
 STEP = 1 / 60
-# Max steps caught up per frame — prevents the "spiral of death"
-# when the window is dragged/backgrounded at high speed.
+# cap the catch up. drag the window about at 20x and come back and it
+# would otherwise try to simulate a week in one frame
 MAX_STEPS_PER_FRAME = 32
 
-# Time machine: snapshot cadence and how much of the past is kept.
+# time machine: how often we save a frame and how many we keep
 SNAP_INTERVAL = 0.25
-SNAP_MAX = 240  # ~60s of recorded history
-REPLAY_STEP = 0.10  # sim-seconds advanced per snapshot while auto-playing
+SNAP_MAX = 240      # roughly a minute
+REPLAY_STEP = 0.10  # sim seconds per saved frame while playing back
 
-# True under PyScript/Pyodide (WebAssembly) — the browser drives the
-# frame timing, so the loop must yield with `await` instead of blocking
-# on the clock.
+# True in the browser (pyscript = wasm). we cant block on clock.tick
+# there, the page drives the frames so we await instead
 IN_BROWSER = sys.platform == "emscripten"
 
 
@@ -70,7 +68,7 @@ async def main() -> int:
     fonts = Fonts()
     clock = pygame.time.Clock()
 
-    # --- app state ------------------------------------------------------
+    # --- state ----------------------------------------------------------
     paused = False
     selected = None  # the Organism currently picked
     kin: frozenset[int] = frozenset()
@@ -78,7 +76,7 @@ async def main() -> int:
     accumulator = 0.0
     frame = 0
 
-    # --- time machine ----------------------------------------------------
+    # --- the time machine -----------------------------------------------
     snapshots: deque = deque(maxlen=SNAP_MAX)
     _snap_acc = 0.0
     replaying = False
@@ -91,10 +89,12 @@ async def main() -> int:
         paused = not paused
 
     def toggle_replay() -> None:
+        # in and out of the time machine
         nonlocal replaying, replay_idx, _replay_acc, _manual_seek, paused
         if not snapshots:
             return
         if not replaying:
+            # going into replay pauses the live world
             replaying = True
             paused = True
             replay_idx = 0
@@ -105,6 +105,7 @@ async def main() -> int:
             replaying = False
             replay_idx = 0
 
+    # jump the replay to a frame
     def seek(index: int) -> None:
         nonlocal replay_idx, _manual_seek
         if not snapshots:
@@ -113,13 +114,14 @@ async def main() -> int:
         replay_idx = min(len(snapshots) - 1, max(0, index))
 
     def pick(x: int, y: int) -> None:
-        """A click on the plate selects the creature under it, or clears."""
+        # click the plate = select whatever is under the cursor.
+        # clicking empty space clears it
         nonlocal selected
         selected = world.organism_at(x, y, tolerance=3)
 
     hud = Hud((WIDTH, HEIGHT), fonts, toggle_pause, toggle_replay, seek)
 
-    # The world is exactly the size of the plate the layout reserved for it.
+    # the world is exactly the size of the plate the layout left for it
     world = Ecosystem(
         WorldConfig(
             width=hud.plate.width,
@@ -132,9 +134,8 @@ async def main() -> int:
 
     running = True
     while running:
-        # dt in seconds, clamped so a long stall doesn't teleport the sim.
-        # In the browser the page drives the frame: yield to the event loop
-        # and measure elapsed time instead of blocking on the clock.
+        # dt in seconds, clamped to 0.25 so a stall (window drag, laptop
+        # waking up) cant teleport the world forwards
         if IN_BROWSER:
             await asyncio.sleep(1 / 60)
             dt = min(clock.tick(0) / 1000.0, 0.25)
@@ -167,10 +168,13 @@ async def main() -> int:
                 pick(event.pos[0] - hud.plate.left, event.pos[1] - hud.plate.top)
 
         world.config.mutation_rate = hud.mutation
+        world.config.food_supply_scale = hud.food_scale
+        world.config.aggression_pressure = hud.pressure
         events = world.take_events()
         screen.fill(theme.BG)
 
         if replaying:
+            # move the playhead and draw a stored frame instead of the world
             if _manual_seek:
                 replay_idx = min(len(snapshots) - 1, max(0, int(hud.scrub.value)))
             else:
@@ -179,13 +183,13 @@ async def main() -> int:
                     _replay_acc -= REPLAY_STEP
                     replay_idx += 1
                     if replay_idx >= len(snapshots):
-                        replay_idx = 0  # loop the recording
+                        replay_idx = 0  # loop it
                 hud.scrub.value = float(replay_idx)
             renderer.render(world, snapshot=snapshots[replay_idx], dt=dt)
         else:
             if not paused:
-                # Fixed timestep with accumulator: speed scales the number
-                # of steps per real second, never the size of a step.
+                # the accumulator: add the real time (times the speed
+                # slider) and run whole 1/60 steps off the total
                 accumulator += dt * hud.speed
                 steps = 0
                 while accumulator >= STEP and steps < MAX_STEPS_PER_FRAME:
@@ -193,19 +197,20 @@ async def main() -> int:
                     accumulator -= STEP
                     steps += 1
                 if steps == MAX_STEPS_PER_FRAME:
-                    accumulator = 0.0  # drop the backlog
+                    accumulator = 0.0  # we are behind, bin the backlog
 
-                # Record a frame for the time machine on a fixed cadence.
+                # save a frame for the time machine every 0.25 sim seconds
                 _snap_acc += dt * hud.speed
                 while _snap_acc >= SNAP_INTERVAL:
                     _snap_acc -= SNAP_INTERVAL
                     snapshots.append(capture_snapshot(world))
 
-            # A selection is dropped when its creature dies.
+            # if the creature we had selected died, forget it
             if selected is not None and selected.dead:
                 selected = None
-            # Kin rings follow the selected family line; recomputed only
-            # when the line could have changed (a birth) or the pick moves.
+            # recompute the family rings only when something could have
+            # changed (a birth or a new creature clicked). doing it every
+            # frame meant walking the whole population 60x a second
             key = (selected.id, world.births, len(world.organisms)) if selected else None
             if key != _kin_key:
                 _kin_key = key
@@ -225,6 +230,8 @@ async def main() -> int:
             running = False
 
     if args.shot:
+        # dev flag, saves the last frame so i can look at it without a
+        # monitor attached
         pygame.image.save(screen, args.shot)
     pygame.quit()
     return 0

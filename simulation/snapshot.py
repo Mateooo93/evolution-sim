@@ -1,12 +1,7 @@
-"""Time-machine snapshots: capture and restore (for display) the world
-state so the game can replay the last minute or two.
-
-A snapshot is a cheap, render-only copy of the ecosystems organisms and
-food. Organisms are `copy.copy`ed and their transient chase pointers
-(target/prey_target/danger) are cleared, since those reference live
-objects that won't exist in a stored snapshot. Nothing here mutates the
-live ecosystem — it only captures copies.
-"""
+# time machine snapshots. we copy the world every 0.25s so replay can show
+# an old frame without touching the real one.
+# copy.copy is enough because all we need is position/genome/energy, the
+# "who am i chasing" pointers are useless once the frame is old
 
 import copy
 
@@ -14,7 +9,6 @@ from .types import Organism
 
 
 def capture(world) -> dict:
-    """A dict holding copies of the world's organisms and food plus time."""
     return {
         "time": world.time,
         "organisms": [_copy_organism(o) for o in world.organisms],
@@ -24,8 +18,7 @@ def capture(world) -> dict:
 
 def _copy_organism(o: Organism) -> Organism:
     c = copy.copy(o)
-    # Chase pointers go stale in a stored frame; render only needs the
-    # position / genome / energy, so drop them.
+    # these point at live creatures, they go stale the moment we store them
     c.target = None
     c.prey_target = None
     c.danger = None

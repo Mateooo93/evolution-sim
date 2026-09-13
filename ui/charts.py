@@ -1,11 +1,7 @@
-"""The trends chart: the ecosystem's vital signs over the run.
-
-Three quantities share one plot because they are read together — the
-population trace against the food supply (who is eating whom out of
-house and home) and against mean aggression (the arms race). Each series
-is normalised to its own range, so the point is shape rather than
-absolute units, and the legend carries the current value of each line.
-"""
+# the trends chart in the sidebar. population, food and mean aggression on
+# one plot because you want to read them against each other.
+# each line gets its own scale so this is about SHAPE not absolute numbers,
+# the legend at the bottom prints the actual values
 
 import pygame
 
@@ -14,14 +10,15 @@ from ui import theme
 
 PAD = 6
 GRID_LINES = 3
-WINDOW = 300  # seconds of history shown (the sim keeps 600)
+WINDOW = 300  # seconds shown. the sim keeps 600 but 5 min fits better
 
-# Semi-transparent surface reused for the fill under the population line;
-# allocating one per frame would churn a full plot-sized buffer at 60 Hz.
+# the soft block under the population line. making a new surface every
+# frame was hammering the gc so we keep one around and wipe it instead
 _shade: pygame.Surface | None = None
 
 
 def _shade_for(size: tuple[int, int]) -> pygame.Surface:
+    # global, i know. it works and its one surface
     global _shade
     if _shade is None or _shade.get_size() != size:
         _shade = pygame.Surface(size, pygame.SRCALPHA)
@@ -36,7 +33,7 @@ def draw_trends(
     fonts,
     config,
 ) -> None:
-    """Plot population, food and aggression inside `rect`, legend included."""
+    # draw the whole thing, chart + legend, into rect
     legend_h = fonts.small.get_height() + 2
     plot = pygame.Rect(rect.left, rect.top, rect.width, rect.height - legend_h)
     pygame.draw.rect(surface, theme.BG, plot, border_radius=4)
@@ -48,14 +45,15 @@ def draw_trends(
         window = hist[-WINDOW:]
         n = len(window)
 
-        # Horizontal grid: with every series normalised, the grid is what
-        # shows the size of the swing.
+        # grid lines. since every line is scaled differently these are the
+        # only way to judge how big a swing actually is
         for i in range(1, GRID_LINES + 1):
             y = plot.top + round(plot.height * i / (GRID_LINES + 1))
             pygame.draw.line(surface, theme.PANEL_BORDER, (plot.left, y), (plot.right, y), 1)
 
         def plot_line(values: list[float], scale: float,
                       color: tuple[int, int, int], fill: bool = False) -> None:
+            # one line. scale is whatever that series tops out at
             if scale <= 0:
                 return
             pts = [
@@ -66,6 +64,7 @@ def draw_trends(
                 for i in range(n)
             ]
             if fill:
+                # translucent block from the line down to the bottom
                 shade = _shade_for(plot.size)
                 poly = [(p[0] - plot.left, p[1] - plot.top) for p in pts]
                 poly += [(poly[-1][0], plot.height), (poly[0][0], plot.height)]
@@ -78,7 +77,7 @@ def draw_trends(
         plot_line([s.food for s in window], float(config.max_food) * 0.65, theme.FOOD)
         plot_line([s.aggression for s in window], 1.0, theme.PREDATOR)
 
-    # Legend: swatch, name, and the live value of each series.
+    # legend along the bottom: dot, name, current value
     y = rect.bottom - legend_h // 2
     x = rect.left + 2
     latest = hist[-1] if hist else None

@@ -1,40 +1,36 @@
-"""Shared colour palette and layout metrics — the lab dark theme.
+# all the colours in one place, plus a few layout numbers.
+# if something looks wrong colour-wise its probably in here
 
-Everything the UI draws pulls its colour from here, so the whole app can
-be re-skinned in one place. Surfaces are stacked (BG < PANEL < RAISED)
-so panels read as layers instead of one flat sheet.
-"""
-
-# --- surfaces ---------------------------------------------------------
-BG = (11, 15, 20)          # window background
-PANEL = (16, 22, 29)       # chrome panels
-RAISED = (23, 31, 41)      # tiles inside a panel, buttons
-RAISED_HOVER = (30, 41, 54)  # tile/button under the cursor
+# panels and backgrounds, darkest to lightest
+BG = (11, 15, 20)
+PANEL = (16, 22, 29)
+RAISED = (23, 31, 41)        # tiles inside a panel, buttons
+RAISED_HOVER = (30, 41, 54)
 PANEL_BORDER = (29, 39, 51)
 BORDER_HOVER = (52, 69, 88)
-METER_BG = (26, 35, 46)    # empty part of a bar
+METER_BG = (26, 35, 46)
 
-# --- text -------------------------------------------------------------
+# text
 TEXT = (226, 232, 240)
 TEXT_DIM = (128, 144, 168)
 TEXT_FAINT = (78, 93, 113)
 
-# --- accents ----------------------------------------------------------
-ACCENT = (52, 211, 153)    # organism green / interactive accent
-ACCENT_DIM = (26, 92, 71)  # accents that must sit behind text
-PREDATOR = (248, 113, 113)  # predator organism — warm red, the danger read
+# the fun ones
+ACCENT = (52, 211, 153)      # green, also the UI accent
+ACCENT_DIM = (26, 92, 71)    # for rings that sit behind other stuff
+PREDATOR = (248, 113, 113)   # red
 PREDATOR_DIM = (110, 48, 48)
-FOOD = (212, 175, 55)      # food item — amber, distinct from organism green
-FOOD_HI = (251, 211, 92)   # eat-pulse ring, brighter than the orb
-HEADING = (32, 140, 102)   # prey heading tick, dimmer than the dot
-HEADING_PRED = (160, 60, 60)  # predator heading tick
-GOLD = (250, 204, 21)      # "recording" and highlight chrome
-GRID_ALPHA = 14            # lab-plate grid line alpha (0-255)
+FOOD = (212, 175, 55)        # amber
+FOOD_HI = (251, 211, 92)     # the eat pulse, brighter than the food itself
+HEADING = (32, 140, 102)     # the little direction line
+HEADING_PRED = (160, 60, 60)
+GOLD = (250, 204, 21)        # replay bar
+GRID_ALPHA = 14              # the faint grid on the plate
 
-# --- layout -----------------------------------------------------------
-MARGIN = 12                # gap between window edge and chrome
-GAP = 10                   # gap between stacked panels
-PANEL_PAD = 12             # padding inside a panel
+# layout
+MARGIN = 12                  # gap round the outside of everything
+GAP = 10                     # gap between stacked panels
+PANEL_PAD = 12
 HEADER_H = 52
 KEYBAR_H = 26
 SIDEBAR_W = 300

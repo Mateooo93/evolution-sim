@@ -1,13 +1,7 @@
-"""The specimen panel: everything known about the selected organism.
-
-Drawn with pygame primitives like the rest of the UI. The panel is the
-place where evolution becomes legible one creature at a time: the trait
-bars show this genome, a tick on each bar shows where the population
-average sits, and the footer counts the family line it belongs to.
-
-    size   ↔ body radius        energy ↔ brightness
-    speed  ↔ heading tick       aggression ↔ colour (green → red)
-"""
+# the SELECTED panel. everything we know about the creature you clicked.
+# this is my favourite bit of the whole UI: the bars show the genome and
+# there is a little tick on each one showing where the POPULATION average
+# is, so you can tell at a glance if this one is fast for its time or not
 
 from typing import NamedTuple
 
@@ -31,22 +25,23 @@ TRAIT_LABELS = {
     "efficiency": "eff",
 }
 
-CHIP = 34  # px, the specimen portrait's bounding box
+CHIP = 34  # the portrait box
 BAR_W = 54
 BAR_H = 5
 
 
 class Descent(NamedTuple):
-    """How the selected creature sits in the family tree."""
-
-    line: int  # living members of its family line, founder included
-    descendants: int  # living organisms descended from it
-    population: int  # for the share calculation
+    # family info for the selected one
+    line: int          # how many of its line are alive
+    descendants: int   # how many creatures came from this specific one
+    population: int    # so we can do the %
 
 
 class Inspector:
     def __init__(self, fonts) -> None:
         self.fonts = fonts
+        # the little portrait orb, cached (it only changes when the
+        # creature changes size/colour/brightness)
         self.meter = Meter(fonts.small, label_w=30, value_w=66)
         self._chip: pygame.Surface | None = None
         self._chip_key: tuple | None = None
@@ -74,6 +69,7 @@ class Inspector:
     # --- sections ---------------------------------------------------------
 
     def _draw_empty(self, surface: pygame.Surface, rect: pygame.Rect, y: int) -> None:
+        # nothing selected, just tell them what to do
         fonts = self.fonts
         lines = (
             ("click a creature", theme.TEXT_DIM),
@@ -87,7 +83,7 @@ class Inspector:
 
     def _draw_identity(self, surface: pygame.Surface, x: int, y: int,
                        o: Organism, config) -> int:
-        """Portrait chip plus id / generation / role, and the family line."""
+        # portrait + "#412 gen 7" + the role and family line
         chip = pygame.Rect(x, y, CHIP, CHIP)
         pygame.draw.rect(surface, theme.BG, chip, border_radius=6)
         pygame.draw.rect(surface, theme.PANEL_BORDER, chip, width=1, border_radius=6)
@@ -110,7 +106,8 @@ class Inspector:
         return y + CHIP + 8
 
     def _portrait(self, o: Organism, config) -> pygame.Surface:
-        """The creature drawn as the plate draws it, cached by appearance."""
+        # draw the creature exactly like the plate does, so the dot in the
+        # panel is the same dot you clicked on
         radius = max(3, round(body_radius_px(o.genome.size)))
         level = energy_level(o.energy, config.max_energy)
         agg = aggression_bucket(o.genome.aggression)
@@ -145,8 +142,8 @@ class Inspector:
 
     def _draw_traits(self, surface: pygame.Surface, rect: pygame.Rect, y: int,
                      o: Organism, averages: dict[str, float]) -> None:
-        """The genome, two columns of bars, each with the population's
-        average marked — so "is this one fast for its time?" is visible."""
+        # 8 traits, 2 columns of 4. averages[] is the population mean so we
+        # can mark it on each bar
         fonts = self.fonts
         row = fonts.tiny.get_height() + 6
         col_w = (rect.width - 2 * theme.PANEL_PAD) // 2
@@ -167,7 +164,7 @@ class Inspector:
         if fill:
             pygame.draw.rect(surface, theme.ACCENT,
                              pygame.Rect(bar.left, bar.top, fill, BAR_H), border_radius=2)
-        # Population average: a tick above the bar.
+        # the population average tick. this is the useful bit
         tick = bar.left + round(BAR_W * max(0.0, min(1.0, average)))
         pygame.draw.line(surface, theme.TEXT_DIM, (tick, bar.top - 3), (tick, bar.bottom + 1), 1)
         surface.blit(fonts.tiny.render(f"{value * 100:3.0f}", True, theme.TEXT),

@@ -1,138 +1,75 @@
-# DevLog #8 — The Final Pass
+# DevLog #8 — last one
 
-**Date:** 2026-09-13 · **Scope:** the interface, the ecology, the ending
+**Date:** 2026-09-13
 
-this is the last one. i set out to make the interface carry the story
-better, and then to make the world worth watching at all, and the second
-half turned out to be the real work. the passing-the-time version of this
-devlog would be about buttons. the honest version is that i pointed a
-stopwatch at my own simulation and found out it had been on life support
-for weeks.
+## the interface
 
-## the interface gets a floor plan
-
-the plate used to be the whole window with a cramped row of readouts
-floating over it. now the plate is a real region with a frame around it,
-and everything else has a home: a header with the controls grouped and
-labelled, a legend bar that names every colour and ring on the plate, and
-a sidebar with four panels. ecosystem (population, food, generation,
-births, deaths, and a bar showing how the plate splits between grazers,
-mixed feeders and hunters), trends (population, food and mean aggression
-over the last five minutes), recent (an event log — kills logged as they
-happen with both ids, everything else summarised once a second), and
+the plate used to be the whole window with a cramped row of numbers on
+top. now it has a frame and everything else has a home: a header with the
+controls grouped, a legend bar naming every colour, and a sidebar with
+four panels — ecosystem (pop, food, generation, births, deaths, and a bar
+splitting grazers / mixed / hunters), trends, recent (an event log), and
 selected.
 
-the specimen panel is the part i actually care about. it draws the
-creature the way the plate draws it, then its role, its family line,
-energy / age / readiness meters, and all eight traits as bars — with a
-tick on each bar marking the *population average*. that tick is the whole
-point. before, the trait bars told you a number; now they answer the only
-question worth asking about a genome, which is whether it is ahead of its
-time or behind it.
+selected is my favourite bit. it draws the creature the way the plate
+does, then its family line, then all 8 traits as bars with a tick on each
+bar showing the POPULATION average. the bars used to tell you a number;
+now they tell you if this thing is fast for its time. clicking also rings
+the creatures living family on the plate, so you can watch one line take
+the plate over or die out.
 
-the plate got the other half of the same idea. clicking a creature puts
-white corner brackets on it and lights up every living member of its
-family line with a dim ring, so you can watch one family either take over
-the plate or quietly die out. eat pulses stayed from last time and
-predation got its own red pulse, so a kill reads as a kill and not a
-disappearing dot.
+## the part where i found out the sim was fake
 
-## the lineage thing i promised last devlog
+i ran the world headless for 900 seconds and printed the totals. 231
+immigrants. the population was parked on the immigration floor, which
+means the ecosystem could not feed itself and was being kept alive by a
+drip of random strangers. not evolution, a bug with a story written round
+it. three numbers:
 
-every organism now carries its parents' ids and the id of the founder its
-line descends from. that is about fifteen lines of bookkeeping in the
-simulation and it buys two numbers in the panel: how many of this line are
-alive right now (and what share of the plate that is), and how many living
-descendants this specific creature has. the first one is the interesting
-one — a line at 3% is a doomed family and a line at 60% is the plate.
+- 27 energy/sec coming in against a population burning 100+. the world
+  was bankrupt.
+- 86% of hunts found nothing to chase, and the ones that did were paying
+  3.5x a grazers metabolism for the privilege.
+- 481,000 flee ticks vs 174,000 steering ticks. they spent their lives
+  sprinting away from each other, and panic costs energy, so the sim was
+  selecting AGAINST being prey.
 
-## the part that was actually broken
+the fixes: food comes in patches now (with even food, speed was a runaway
+scramble trait — everyone hit max speed and then nothing could catch
+anything); sprinting costs energy so a chase is an endurance chase; panic
+only when the threat is close AND faster; the cost moved off the gene and
+onto the chase, because taxing the trait dug a valley no mutant could
+climb out of; and meals got small and frequent so the plate reads as
+grazed.
 
-i ran the world headless for nine hundred simulated seconds and printed
-the totals. two hundred and thirty-one immigrants. the population was
-sitting on the immigration floor, meaning the ecosystem could not feed
-itself and was being propped up by a drip of random strangers — who,
-being random, also had a mean aggression of 0.5 and were quietly poisoning
-the gene pool. that is not evolution, that is a bug with a story written
-around it.
+900s unattended from 90 founders now: population 182-245, zero
+immigrants, 117 hunts, 1216 births, deepest generation 27.
 
-so i instrumented it and found three things:
+## what i couldnt get
 
-- **the energy budget was negative.** food was arriving as roughly 27
-  energy per second against a population that burned over a hundred. no
-  amount of clever behaviour survives arithmetic.
-- **86% of hunts found nothing catchable**, and the hunters that did chase
-  were paying up to 3.5x a grazer's metabolism for the privilege of
-  carrying the gene. predation was a fitness trap, not a niche.
-- **everyone was panicking.** 481,000 flee ticks against 174,000 steering
-  ticks: creatures spent more of their lives sprinting away from
-  neighbours than doing anything else. panic costs energy, so the world
-  was selecting *against* being prey.
+a predator caste. aggression settles at 0.05-0.22 in one lump, so there is
+no separate red ecotype, just a grazer majority with a hunting tail. the
+hunts are real, they just never become a *role* — hunting gets less
+profitable the more of you do it, so it settles in the middle instead of
+splitting in two. i left it honest rather than tuning until the picture
+matched the story i wanted.
 
-the fixes are the most interesting code in the project now:
+## the two dials
 
-- **food arrives in patches.** scattered uniformly, food made speed a
-  runaway scramble trait — every meal was a lone dot, so the fastest
-  creature won every race, and within ten minutes the whole population sat
-  at maximum speed. which meant nobody could outrun anybody, which meant
-  predation could never work. with meadows, a forager that finds one eats
-  several meals without travelling, speed stops being the only thing that
-  matters, and prey gather exactly where a hunter knows to look.
-- **sprinting needs energy.** a chase is now an endurance chase: prey
-  only panic at a threat that is close and genuinely faster, and a sprint
-  costs energy they may not have. a fresh, alert prey escapes a hunter of
-  similar speed; a tired one doesn't.
-- **you pay for hunting, not for the gene.** the chase burns extra energy
-  and an unused aggression gene is nearly free, so a mutant that hunts a
-  little pays a little. the old version taxed the trait, which dug a
-  valley no intermediate could cross — aggression could never climb.
-- **meals got small and frequent.** the same energy flow as fewer, bigger
-  items leaves the plate visibly grazed instead of stripped bare.
+FOOD scales the supply live. AGGRESSION pulls every newborn 40% of the way
+toward hunter (or grazer if negative) — a bias on inheritance, not a
+cheat, you push and selection pushes back. winding it to +1 does not give
+you a plate of killers: everyone lands at the same aggression, nobody is
+0.1 more aggressive than anyone else, so nobody can hunt at all. zero
+kills, population down to a third, food piling up under a plate of
+starving red dots. better demo of why predators stay rare than anything i
+could have designed.
 
-the result, over ten minutes, unattended, seeded once from ninety
-founders: population 182–245, **zero immigrants**, 117 successful hunts,
-1,216 births, and the deepest generation at 27. selection visibly pushes
-speed up and body size down on the trends chart. the safety net never
-fires.
+## the end
 
-## what i did not get
-
-a predator caste. mean aggression settles low (0.05–0.22 depending on the
-run) and the distribution stays unimodal — no separate red-blooded
-ecotype, just a grazer majority with a hunting tail. the hunts are real
-(hundreds per ten minutes) but they never become a *role*. i know roughly
-why: as aggression rises, the pool of prey weaker than you by the
-required margin shrinks, so hunting is frequency-dependent and settles at
-an interior optimum instead of splitting the population in two. the
-things i would try next are a handling time before you can swallow a kill,
-refuges that let prey hold a patch, or a swallow rule that ties body size
-to what you can eat. i left it honest rather than tuned until the picture
-looked like the story i wanted.
-
-## the frame budget
-
-the movement trails were 70% of every frame — 1,500 individual
-alpha-blended line segments. drawing each tail as two polylines (dim tail,
-bright leading edge) instead of one blended line per segment took the
-render from 16.7 ms to 5.8 ms, which is the difference between a
-simulation that can run at 60 fps and one that cannot. same picture, a
-tenth of the cost.
-
-| | before | after |
-| --- | --- | --- |
-| population (400 s, same seed and start) | 29–43, pinned at the immigration floor | 119–268, mean 187 |
-| immigrants | 231 | 0 |
-| successful hunts | 38 | 96 |
-| mean speed | drifting to the ceiling, unopposed | the same, but now it costs something |
-| render (plate only) | 16.7 ms | 5.8 ms |
-
-## the ending
-
-eight devlogs, three layers that don't know about each other, one browser
-build, a test suite, and a plate that now runs itself. the thing i did not
-expect: the graphics were never the hard part. every visual idea worked on
-the first or second try, and the ecology took a stopwatch, a pile of
-instrumentation and about twenty experiments to stop lying to me. the
-lesson i would hand to anyone starting the same project is embarrassingly
-simple — run the world headless, print the totals, and do that before you
-write a single widget.
+eight devlogs, three layers that dont know about each other, a browser
+build, and a plate that finally runs itself. the graphics were never the
+hard part — every visual idea worked first or second try. the ecology took
+a stopwatch and twenty experiments to stop lying to me. if you build one
+of these: run the world headless and print the totals before you write a
+single button.
