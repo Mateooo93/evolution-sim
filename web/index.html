@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <title>EvoLab</title>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>EvoLab</title>
   <link rel="stylesheet" href="https://pyscript.net/releases/2025.7.3/core.css">
   <script type="module" src="https://pyscript.net/releases/2025.7.3/core.js"></script>
   <style>
@@ -12,105 +11,48 @@
       color: #cbd5e1;
       font-family: monospace;
       margin: 0;
-      padding: 16px;
+      padding: 14px;
       text-align: center;
-    }
-    h1 {
-      font-size: 20px;
-      letter-spacing: 2px;
-      color: #34d399;
-      margin: 8px 0 4px;
-    }
-    .sub {
-      color: #64748b;
-      font-size: 13px;
-      margin-bottom: 14px;
-    }
-    .sub b {
-      color: #cbd5e1;
-    }
-    #wrap {
-      position: relative;
-      max-width: 1280px;
-      margin: 0 auto;
     }
     canvas {
       width: 100%;
-      height: auto;
+      max-width: 1280px;
       border: 1px solid #1d2733;
       display: block;
-    }
-    #status {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      background: #0b0f14;
-      color: #64748b;
-      font-size: 13px;
-      padding-top: 120px;
+      margin: 10px auto;
     }
     #err {
       display: none;
-      text-align: left;
       white-space: pre-wrap;
-      color: #f87171;
-      background: #160f0f;
-      border: 1px solid #3f1d1d;
-      padding: 10px;
-      margin: 12px auto 0;
-      max-width: 1280px;
-      font-size: 12px;
-    }
-    .foot {
-      color: #475569;
-      font-size: 12px;
-      margin: 12px auto 0;
-      max-width: 1280px;
       text-align: left;
-    }
-    .foot div {
-      margin-top: 3px;
+      color: #f87171;
+      font-size: 12px;
+      max-width: 1280px;
+      margin: 10px auto;
     }
   </style>
 </head>
 <body>
-  <h1>EVOLAB</h1>
-  <div class="sub">
-    an artificial life sim running in your browser.
-    <b>space</b> pause, <b>R</b> replay, <b>click</b> a creature to inspect it.
-  </div>
-
-  <div id="wrap">
-    <canvas id="canvas" width="1280" height="860"></canvas>
-    <div id="status">
-      loading python, this takes a few seconds the first time
-    </div>
-  </div>
-
+  <p>EvoLab. Space pauses, R replays the last minute, click a creature to
+  inspect it. Green eats plants, red hunts, amber is food. Wait a few seconds
+  for Python to load.</p>
+  <canvas id="canvas" width="1280" height="860"></canvas>
   <pre id="err"></pre>
+  <p id="status">loading python...</p>
 
-  <div class="foot">
-    <div>green dots eat plants, red dots hunt them, amber dots are food</div>
-    <div>every organism has 8 traits that it passes on with small random changes</div>
-    <div>if it looks frozen, open the console and tell me what it says</div>
-  </div>
-
-  <script type="py-game" src="evolab.py?v=10"></script>
+  <script type="py-game" src="evolab.py?v=11"></script>
   <script>
-    // if python blows up in here it would otherwise just sit there looking
-    // broken, so put the error on the page
-    window.addEventListener("unhandledrejection", (e) => {
-      const box = document.getElementById("err");
+    // if python dies in here it would just sit there looking broken, so
+    // put the error on the page instead
+    window.addEventListener("unhandledrejection", function (e) {
+      var box = document.getElementById("err");
       box.style.display = "block";
       box.textContent = String((e.reason && e.reason.stack) || e.reason);
-      document.getElementById("status").style.display = "none";
     });
-    window.addEventListener("error", (e) => {
-      const box = document.getElementById("err");
+    window.addEventListener("error", function (e) {
+      var box = document.getElementById("err");
       box.style.display = "block";
-      box.textContent += "\n" + e.message;
+      box.textContent += e.message;
     });
   </script>
 </body>
