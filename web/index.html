@@ -5,6 +5,7 @@
   <title>EvoLab</title>
   <link rel="stylesheet" href="https://pyscript.net/releases/2025.7.3/core.css">
   <script type="module" src="https://pyscript.net/releases/2025.7.3/core.js"></script>
+  //css customized by me!
   <style>
     body {
       background: #0b0f14;
@@ -33,9 +34,9 @@
   </style>
 </head>
 <body>
-  <p>EvoLab. Space pauses, R replays the last minute, click a creature to
+  <p>Space: Pause, R: replays the last minute, click a creature to
   inspect it. Green eats plants, red hunts, amber is food. Wait a few seconds
-  for Python to load.</p>
+  for the game to load</p>
   <canvas id="canvas" width="1280" height="860"></canvas>
   <pre id="err"></pre>
   <p id="status">loading python...</p>
@@ -44,6 +45,8 @@
   <script>
     // if python dies in here it would just sit there looking broken, so
     // put the error on the page instead
+    // |this was written by ai becuase the game kept ffreezing
+    // V
     window.addEventListener("unhandledrejection", function (e) {
       var box = document.getElementById("err");
       box.style.display = "block";
