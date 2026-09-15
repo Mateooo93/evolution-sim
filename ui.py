@@ -3,17 +3,17 @@ import pygame
 
 from sim import AGGRESSION, SIZE, GENE_NAMES
 
-BG = (11, 15, 20)
+BG =  (86, 182, 255)  
 TEXT = (226, 232, 240)
 DIM = (128, 144, 168)
 FAINT = (78, 93, 113)
 PANEL = (16, 22, 29)
 BORDER = (29, 39, 51)
-GREEN = (52, 211, 153)
+GREEN = (86, 182, 255)  
 AMBER = (212, 175, 55)
 RED = (248, 113, 113)
 GOLD = (250, 204, 21)
-
+ 
 GRID = 64       # spacing of the faint lines on the plate
 
 _font = None
