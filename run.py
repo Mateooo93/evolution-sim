@@ -1,12 +1,11 @@
-# entry point for the web version. the game itself is the same code the
-# desktop version runs, pyscript.toml fetched it onto the filesystem
+# this script is used to run the game on a page, no game logic is here, just the loop to start the game and output errors if there are some
+
 
 import asyncio
 import traceback
 
 
 def _loading(show):
-    # the "loading python" line under the canvas
     try:
         from pyscript import window
 
@@ -18,7 +17,6 @@ def _loading(show):
 
 
 def _show_error(text):
-    # a silent death in a browser is impossible to debug, so put it on the page
     print(text)
     try:
         from pyscript import window

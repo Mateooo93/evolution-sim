@@ -1,28 +1,29 @@
-# the world. there is no pygame in this file so it can run without a window.
+# this is the script that takes care of the world
 # the ui in main.py calls world.update(dt) and draws whatever is in here
 
 import math
 import random
 
-# the eight genes, all 0.0 to 1.0. genes[SPEED] reads better than genes[0]
+# this is the 8 game genes, i used range(8) to index each one 
 SPEED, SIZE, VISION, METABOLISM, FERTILITY, LIFESPAN, AGGRESSION, EFFICIENCY = range(8)
 GENE_NAMES = ["speed", "size", "vision", "meta", "fert", "life", "agg", "eff"]
 
+#whole game config and settings
 MAX_ENERGY = 100.0
-HUNGRY = 0.8          # under 80% energy it goes looking for food or prey
-LOOK_EVERY = 0.25     # seconds between looking around. every frame is too slow
-HUNT_MARGIN = 0.1     # how much more aggressive you must be to eat someone
-CATCH_MARGIN = 1.05   # how much faster you must be to catch them
-SPRINT_FLOOR = 0.25   # under 25% energy you cannot sprint, so you get caught
-SPRINT = 1.35         # sprint speed multiplier
-FLEE_DRAIN = 0.8      # extra energy per second while running away
-HUNT_DRAIN = 1.2      # extra energy per second while chasing
-FORAGE_PENALTY = 0.2  # hunters get less out of plants
-PREY_ENERGY = 45.0    # a catch is worth about four plants
+HUNGRY = 0.8          
+LOOK_EVERY = 0.25     
+HUNT_MARGIN = 0.1     
+CATCH_MARGIN = 1.05  
+SPRINT_FLOOR = 0.25 
+SPRINT = 1.35       
+FLEE_DRAIN = 0.8    
+HUNT_DRAIN = 1.2     
+FORAGE_PENALTY = 0.2
+PREY_ENERGY = 45.0    
 FOOD_ENERGY = 12.0
 
 MAX_POPULATION = 400
-MIN_POPULATION = 28   # below this the game adds a random creature now and then
+MIN_POPULATION = 28  
 MIGRATE_RATE = 0.15
 
 MATE_RADIUS = 30
@@ -30,18 +31,17 @@ MATE_ENERGY = 50
 MATE_COST = 18
 BABY_ENERGY = 30
 
-FOOD_RATE = 9.0       # items per second, the FOOD slider changes this
-PATCH_SIZE = 10       # a patch is a clump of this many items
+FOOD_RATE = 9.0      
+PATCH_SIZE = 10       
 PATCH_RADIUS = 55
 MAX_FOOD = 320
 
-
+# the world
 def clamp(v):
     return max(0.0, min(1.0, v))
 
 
-# what the genes turn into. these are the only places genes are read as
-# something other than a number
+#used for what the gens become in pixels, for drawing and distance checks
 
 def speed_px(genes):
     return 10 + genes[SPEED] * 60
@@ -60,8 +60,7 @@ def max_age(genes):
 
 
 def drain_per_second(genes):
-    # energy cost per second. every gene shows up in here, that is what
-    # makes them a tradeoff instead of just "bigger is better"
+    #this function takes care of metaabolism so like how much energy is lost per second
     metabolism = 0.22 + genes[METABOLISM] * 0.40
     body = 1 + genes[SPEED] * 0.9 + genes[SIZE] * 0.8
     saving = 1 - genes[EFFICIENCY] * 0.5
@@ -108,17 +107,16 @@ class World:
         for _ in range(12):
             self.spawn_patch()
 
-    # --- making creatures -------------------------------------------------
 
     def new_creature(self, x=None, y=None, genes=None, generation=1):
         if x is None:
-            x = random.random() * self.width
+            x = random.random() * self.width #random position in the world
         if y is None:
             y = random.random() * self.height
-        if genes is None:
-            genes = [random.random() for _ in range(8)]
+        if genes is None: 
+            genes = [random.random() for _ in range(8)]#picks a random gene, look at the beginning of the screipt to check the genes
             # new arrivals come in as aggressive as the dial is set
-            genes[AGGRESSION] = max(0.0, self.pressure)
+            genes[AGGRESSION] = max(0.0, self.pressure) #this call the aggresive setting
         return Creature(x, y, genes, generation)
 
     def mix(self, genes_a, genes_b):
@@ -133,7 +131,6 @@ class World:
             baby[AGGRESSION] += (target - baby[AGGRESSION]) * abs(self.pressure) * 0.4
         return baby
 
-    # --- geometry ---------------------------------------------------------
 
     def gap(self, x1, y1, x2, y2):
         # distance between two points, the short way round the edges
@@ -165,7 +162,6 @@ class World:
         self.turn_toward(c, x, y, dt)
         c.angle += math.pi
 
-    # --- looking around ---------------------------------------------------
 
     def nearest_food(self, c):
         reach = vision_px(c.genes)
@@ -217,7 +213,6 @@ class World:
                 best = other
         return best
 
-    # --- one creature, one frame ------------------------------------------
 
     def step(self, c, dt):
         c.age += dt
@@ -307,7 +302,6 @@ class World:
         c.energy = min(MAX_ENERGY, c.energy + PREY_ENERGY)
         c.chase = None
 
-    # --- the whole world, one frame ---------------------------------------
 
     def update(self, dt):
         self.time += dt
@@ -392,7 +386,6 @@ class World:
             self._migrate_acc -= 1
             self.creatures.append(self.new_creature())
 
-    # --- things the ui asks for -------------------------------------------
 
     def population(self):
         return len(self.creatures)
