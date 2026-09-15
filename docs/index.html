@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>EvoLab</title>
+  <link rel="stylesheet" href="https://pyscript.net/releases/2025.7.3/core.css">
+  <script type="module" src="https://pyscript.net/releases/2025.7.3/core.js"></script>
+  <!-- css customized by me -->
+  <style>
+    body {
+      background: #0b0f14;
+      color: #cbd5e1;
+      font-family: monospace;
+      margin: 0;
+      padding: 14px;
+      text-align: center;
+    }
+    canvas {
+      width: 100%;
+      max-width: 1280px;
+      border: 1px solid #1d2733;
+      display: block;
+      margin: 10px auto;
+    }
+    #err {
+      display: none;
+      white-space: pre-wrap;
+      text-align: left;
+      color: #f87171;
+      font-size: 12px;
+      max-width: 1280px;
+      margin: 10px auto;
+    }
+  </style>
+</head>
+<body>
+  <p>Space: Pause, R: replays the last minute, click a creature to
+  inspect it. Green eats plants, red hunts, amber is food. Wait a few seconds
+  for the game to load</p>
+  <canvas id="canvas" width="1280" height="860"></canvas>
+  <pre id="err"></pre>
+  <p id="status">loading python...</p>
+
+  <script type="py-game" src="run.py" config="pyscript.toml"></script>
+  <script>
+    // if python dies in here it would just sit there looking broken, so
+    // put the error on the page instead
+    // |this was written by ai becuase the game kept ffreezing
+    // V
+    window.addEventListener("unhandledrejection", function (e) {
+      var box = document.getElementById("err");
+      box.style.display = "block";
+      box.textContent = String((e.reason && e.reason.stack) || e.reason);
+    });
+    window.addEventListener("error", function (e) {
+      var box = document.getElementById("err");
+      box.style.display = "block";
+      box.textContent += e.message;
+    });
+  </script>
+</body>
+</html>
