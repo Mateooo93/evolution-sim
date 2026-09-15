@@ -1,0 +1,20 @@
+# pulls the game files out of the repo onto the browser's python filesystem,
+# so the page serves the real modules instead of one built copy.
+# the page sits in the repo root, so these are just the repo files
+
+[files]
+"./main.py" = "./main.py"
+"./simulation/ecosystem.py" = "./simulation/ecosystem.py"
+"./simulation/food.py" = "./simulation/food.py"
+"./simulation/genome.py" = "./simulation/genome.py"
+"./simulation/snapshot.py" = "./simulation/snapshot.py"
+"./simulation/spatial.py" = "./simulation/spatial.py"
+"./simulation/types.py" = "./simulation/types.py"
+"./rendering/orbs.py" = "./rendering/orbs.py"
+"./rendering/renderer.py" = "./rendering/renderer.py"
+"./ui/charts.py" = "./ui/charts.py"
+"./ui/fonts.py" = "./ui/fonts.py"
+"./ui/hud.py" = "./ui/hud.py"
+"./ui/inspector.py" = "./ui/inspector.py"
+"./ui/theme.py" = "./ui/theme.py"
+"./ui/widgets.py" = "./ui/widgets.py"
