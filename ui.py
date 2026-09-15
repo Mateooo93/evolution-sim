@@ -3,16 +3,16 @@ import pygame
 
 from sim import AGGRESSION, SIZE, GENE_NAMES
 
-BG =  (86, 182, 255)  
-TEXT = (226, 232, 240)
-DIM = (128, 144, 168)
-FAINT = (78, 93, 113)
-PANEL = (16, 22, 29)
-BORDER = (29, 39, 51)
-GREEN = (86, 182, 255)  
+BG = (255, 255, 255)
+TEXT = (30, 35, 45)
+DIM = (90, 100, 115)
+FAINT = (150, 158, 170)
+PANEL = (245, 247, 249)
+BORDER = (200, 206, 214)
+GREEN = (86, 182, 255)
 AMBER = (212, 175, 55)
 RED = (248, 113, 113)
-GOLD = (250, 204, 21)
+GOLD = (200, 150, 0)
  
 GRID = 64       # spacing of the faint lines on the plate
 
@@ -31,9 +31,9 @@ def clear(plate):
     # wipe the plate and draw faint squares on it so it isnt just empty black
     plate.fill(BG)
     for x in range(0, plate.get_width(), GRID):
-        pygame.draw.line(plate, (18, 24, 32), (x, 0), (x, plate.get_height()))
+        pygame.draw.line(plate, (235, 238, 242), (x, 0), (x, plate.get_height()))
     for y in range(0, plate.get_height(), GRID):
-        pygame.draw.line(plate, (18, 24, 32), (0, y), (plate.get_width(), y))
+        pygame.draw.line(plate, (235, 238, 242), (0, y), (plate.get_width(), y))
 
 
 def draw_panel(screen, rect):
@@ -42,19 +42,27 @@ def draw_panel(screen, rect):
     pygame.draw.rect(screen, BORDER, rect, width=1)
 
 
+def fade(colour, amount):
+    # mix a colour toward the background. used to show low energy, so it
+    # works whether the background is dark or light
+    return (int(colour[0] + (BG[0] - colour[0]) * amount),
+            int(colour[1] + (BG[1] - colour[1]) * amount),
+            int(colour[2] + (BG[2] - colour[2]) * amount))
+
+
 def creature_colour(aggression, energy):
-    # green eats plants, red hunts, amber in between. low energy goes dark
+    # blue eats plants, red hunts, amber in between. low energy goes pale
     if aggression < 0.35:
-        r, g, b = GREEN
+        base = GREEN
     elif aggression < 0.7:
-        r, g, b = AMBER
+        base = AMBER
     else:
-        r, g, b = RED
+        base = RED
     if energy < 33:
-        return (r // 4, g // 4, b // 4)
+        return fade(base, 0.7)
     if energy < 66:
-        return (r // 2, g // 2, b // 2)
-    return (r, g, b)
+        return fade(base, 0.35)
+    return base
 
 
 def draw_food(plate, food):
@@ -76,8 +84,8 @@ def draw_trails(plate, world):
         if abs(x0 - c.x) > 100 or abs(y0 - c.y) > 100:
             continue        # it wrapped round the edge, dont draw across the screen
         colour = creature_colour(c.genes[AGGRESSION], c.energy)
-        dim = (colour[0] // 3, colour[1] // 3, colour[2] // 3)
-        pygame.draw.line(plate, dim, (int(x0), int(y0)), (int(c.x), int(c.y)))
+        pygame.draw.line(plate, fade(colour, 0.55),
+                         (int(x0), int(y0)), (int(c.x), int(c.y)))
 
 
 def draw_selection(plate, c):
